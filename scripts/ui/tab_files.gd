@@ -191,7 +191,9 @@ func _on_new() -> void:
 		name = "新算法.py"
 	Game.new_file(name, "# 在这里写你的排序算法\n# 服务器会调用 sort(a)，把 a 排成升序\ndef sort(a):\n    return a\n")
 	_name_edit.text = ""
-	main.switch_file(Game.files.size() - 1)
+	# force：Game.new_file 已经把 current_file 设成新文件了，
+	# 不带 force 会被 switch_file 的"同一个文件"判断挡掉，编辑器不会重载。
+	main.switch_file(Game.files.size() - 1, true)
 	main.log_line("已新建 %s" % name, "sys")
 
 
@@ -201,7 +203,7 @@ func _on_duplicate() -> void:
 		return
 	var name := String((Game.files[idx] as Dictionary)["name"])
 	Game.duplicate_file(idx)
-	main.switch_file(Game.files.size() - 1)
+	main.switch_file(Game.files.size() - 1, true)
 	main.log_line("已复制 %s" % name, "sys")
 
 

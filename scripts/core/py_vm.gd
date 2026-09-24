@@ -289,10 +289,10 @@ func _exec(ins: Dictionary, f: Dictionary) -> void:
 			_index_aug(obj, idx, val, String(ins["a"]), line)
 
 		"BUILD_LIST":
-			_build_seq(int(ins["a"]), true)
+			_build_seq(int(ins["a"]))
 
 		"BUILD_TUPLE":
-			_build_seq(int(ins["a"]), false)
+			_build_seq(int(ins["a"]))
 
 		"UNPACK":
 			var base: int = ins["a"]
@@ -831,17 +831,16 @@ func _seq_items(v: Variant, line: int) -> Array:
 	return []
 
 
-func _build_seq(count: int, is_list: bool) -> void:
+## 构造序列。元组和列表在这个子集里是同一个东西：UNPACK（a, b = b, a）和
+## BUILD_* 都按 PyList 处理，所以两种写法只差一个标记，不必分两条路径。
+func _build_seq(count: int) -> void:
 	if stack.size() < count:
 		_fail("内部错误：构造序列时栈不足", 0)
 		return
 	var out: Array = []
 	for _k in count:
 		out.push_front(stack.pop_back())
-	if is_list:
-		stack.append(PyObjects.PyList.new(out))
-	else:
-		stack.append(PyObjects.PyList.new(out))
+	stack.append(PyObjects.PyList.new(out))
 
 
 func _make_iter(obj: Variant, line: int) -> Dictionary:

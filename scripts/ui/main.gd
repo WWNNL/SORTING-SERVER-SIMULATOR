@@ -220,7 +220,7 @@ func _build_left() -> Control:
 	var frame := PrtsFrame.new()
 	frame.bracket_len = 12
 	frame.thickness = 2
-	frame.bracket_color = Prts.LINE_HI
+	frame.bracket_color = Prts.FRAME_IDLE
 	viz_wrap.add_child(frame)
 	_viz_frame = frame
 
@@ -430,10 +430,14 @@ func reload_editor() -> void:
 ##
 ## 运行途中切换必须先把当前这次跑停掉，并重新生成排列——否则可视化上跑的还是
 ## 旧算法的数据，看起来就像"换了代码却没生效"。
-func switch_file(index: int) -> void:
+##
+## force：新建/复制文件时必须传 true。那两个动作在 Game 里已经把 current_file
+## 指到新文件了，这里再比一次 index == current_file 就会提前返回，编辑器于是
+## 还停在上一个文件的代码上——玩家一敲键盘就把旧代码写进了新文件。
+func switch_file(index: int, force := false) -> void:
 	if index < 0 or index >= Game.files.size():
 		return
-	if index == Game.current_file:
+	if index == Game.current_file and not force:
 		_update_file_label()
 		return
 	if not Game.is_unlocked(index):
@@ -496,15 +500,13 @@ func _on_stop_pressed() -> void:
 	_emit_state()
 
 
-## 单步：没有题目就先生成一局并停住，之后每次只推进一条指令。
+## 单步：没有题目（或上一局已结束）就先生成一局并停住，之后每次只推进一条指令。
 func _on_step_pressed() -> void:
-	if _vm == null:
+	if _vm == null or _state == ST_DONE or _state == ST_ERROR:
 		if not _prepare_run():
 			return
 		_state = ST_PAUSED
 		_emit_state()
-		return
-	if _state == ST_DONE or _state == ST_ERROR:
 		return
 	_step_pending = true
 	if _state == ST_RUNNING:
@@ -514,10 +516,8 @@ func _on_step_pressed() -> void:
 
 func _on_stage_changed(_index: int) -> void:
 	_refresh_stage()
-	# 阶段变了，旧题目作废。新题目等玩家点「运行」时再生成。
-	_clear_task()
-	_state = ST_IDLE
-	_emit_state()
+	# 刻意不清题目：阶段推进是"通关"的结果，玩家需要看到刚才那一局的成绩。
+	# 新阶段的题目等下次点「运行」时再生成。
 
 
 ## 清掉当前题目。
@@ -651,7 +651,7 @@ func _emit_state() -> void:
 	# 运行指示框：可视化区和编辑器区的角标同步点亮
 	var running := _state == ST_RUNNING
 	if _viz_frame != null:
-		_viz_frame.bracket_color = Prts.WHITE if running else Prts.LINE_HI
+		_viz_frame.bracket_color = Prts.WHITE if running else Prts.FRAME_IDLE
 		_viz_frame.queue_redraw()
 	if _tab_editor != null:
 		_tab_editor.set_running(running)
@@ -836,7 +836,9 @@ static func _is_sorted(a: Array) -> bool:
 
 func _on_coins_changed(coins: int) -> void:
 	if _coin_label != null:
-		_coin_label.text = Prts.comma(coins)
+		# 带一位小数，和「本次电费 Ð0.0」保持同一种货币读数形状。
+		# 注意 coins 是整数，所以小数位恒为 .0——它在这里是排版，不是精度。
+		_coin_label.text = Prts.comma1(float(coins))
 
 
 func _refresh_stage() -> void:

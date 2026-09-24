@@ -277,8 +277,12 @@ func _expr(n: Variant) -> void:
 		"Call":
 			_call(node)
 		"Attr":
-			_expr(node["obj"])
-			_e("LOAD_ATTR", String(node["attr"]), null, line)
+			# 这台服务器的值没有可读属性：数组方法只能"调用"，不能"取出来"。
+			# 早期版本在这里发了一条 LOAD_ATTR，而 VM 根本没实现它，玩家拿到的是
+			# "内部错误：未知指令" —— 看不懂也无从下手。改成编译期就给出中文说明。
+			# 注意：方法调用不走这里（见 _call），所以 a.append(x) 完全不受影响。
+			_err("本服务器的值没有属性可读（.%s）。数组方法要直接调用，写成 a.%s(...)"
+				% [String(node["attr"]), String(node["attr"])], line)
 		"Subscript":
 			_expr(node["obj"])
 			_expr(node["idx"])

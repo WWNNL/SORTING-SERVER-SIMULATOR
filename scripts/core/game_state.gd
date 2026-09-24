@@ -28,7 +28,6 @@ var stats := {
 	"total_earned": 0,
 	"power_paid": 0,
 	"best_reward": 0,
-	"best_ops": 0,
 }
 
 var _loaded := false
@@ -90,7 +89,6 @@ func buy(part: String) -> Dictionary:
 	# 先算买完之后会不会供电不足——超了也允许买，但要让玩家清楚后果
 	coins -= cost
 	tiers[part] = cur + 1
-	stats["total_earned"] = int(stats["total_earned"])
 
 	coins_changed.emit(coins)
 	tiers_changed.emit()
@@ -165,17 +163,19 @@ func set_current_code(code: String) -> void:
 	# 文件页的刷新交给切标签页时触发。
 
 
-func file_size(code: String) -> int:
-	return code.to_utf8_buffer().size()
+## 新建的文件和算法库里的条目保持同一套字段，存档里就不会出现两种形状。
+func _blank_file(name: String, code: String, cost: int) -> Dictionary:
+	return {
+		"name": name, "code": code,
+		"cost": cost, "unlocked": cost <= 0,
+		"best_ops": 0, "best_reward": 0, "best_n": 0,
+	}
 
 
 func new_file(name: String, code := "") -> int:
 	if name.strip_edges().is_empty():
 		name = _unique_name("新算法")
-	files.append({
-		"name": name, "code": code,
-		"best_ops": 0, "best_reward": 0, "best_n": 0,
-	})
+	files.append(_blank_file(name, code, 0))
 	current_file = files.size() - 1
 	files_changed.emit()
 	save_game()
@@ -186,11 +186,8 @@ func duplicate_file(index: int) -> int:
 	if index < 0 or index >= files.size():
 		return -1
 	var src: Dictionary = files[index]
-	files.append({
-		"name": _unique_name(String(src["name"]) + " 副本"),
-		"code": String(src["code"]),
-		"best_ops": 0, "best_reward": 0, "best_n": 0,
-	})
+	files.append(_blank_file(_unique_name(String(src["name"]) + " 副本"),
+		String(src["code"]), 0))
 	current_file = files.size() - 1
 	files_changed.emit()
 	save_game()
@@ -391,7 +388,7 @@ func reset_all() -> void:
 	current_file = 0
 	stats = {
 		"runs": 0, "completed": 0, "failed": 0, "total_earned": 0,
-		"power_paid": 0, "best_reward": 0, "best_ops": 0,
+		"power_paid": 0, "best_reward": 0,
 	}
 	files = []
 	_seed_starter_files()
@@ -407,12 +404,8 @@ func reset_all() -> void:
 func _seed_starter_files() -> void:
 	files = []
 	for entry in LIBRARY:
-		var cost := int(entry["cost"])
-		files.append({
-			"name": entry["name"], "code": entry["code"],
-			"cost": cost, "unlocked": cost <= 0,
-			"best_ops": 0, "best_reward": 0, "best_n": 0,
-		})
+		files.append(_blank_file(String(entry["name"]), String(entry["code"]),
+			int(entry["cost"])))
 	current_file = 0
 	files_changed.emit()
 	save_game()
@@ -428,12 +421,7 @@ func _ensure_library_complete() -> void:
 		var nm := String(entry["name"])
 		if have.has(nm):
 			continue
-		var cost := int(entry["cost"])
-		files.append({
-			"name": nm, "code": entry["code"],
-			"cost": cost, "unlocked": cost <= 0,
-			"best_ops": 0, "best_reward": 0, "best_n": 0,
-		})
+		files.append(_blank_file(nm, String(entry["code"]), int(entry["cost"])))
 		added = true
 	if added:
 		files_changed.emit()
@@ -504,7 +492,7 @@ const LIBRARY := [
 	},
 	{
 		"name": "归并排序.py", "cost": 400,
-		"code": "# 归并排序：分治 + 额外缓冲区\n# 时间稳定在 n log n，代价是需要一块辅助内存（本机很吃这个）\n# 注意：这个文件 682 字节，起始硬盘只有 512 字节，得先升硬盘\n\ndef sort(a):\n    ms(a, 0, len(a) - 1)\n    return a\n\ndef ms(a, lo, hi):\n    if lo >= hi:\n        return\n    mid = (lo + hi) // 2\n    ms(a, lo, mid)\n    ms(a, mid + 1, hi)\n    tmp = []\n    i = lo\n    j = mid + 1\n    while i <= mid and j <= hi:\n        if a[i] <= a[j]:\n            tmp.append(a[i])\n            i += 1\n        else:\n            tmp.append(a[j])\n            j += 1\n    while i <= mid:\n        tmp.append(a[i])\n        i += 1\n    while j <= hi:\n        tmp.append(a[j])\n        j += 1\n    for k in range(len(tmp)):\n        a[lo + k] = tmp[k]\n",
+		"code": "# 归并排序：分治 + 额外缓冲区\n# 时间稳定在 n log n，代价是需要一块辅助内存（本机很吃这个）\n# 注意：这个文件 767 字节，起始硬盘只有 512 字节，得先升硬盘\n\ndef sort(a):\n    ms(a, 0, len(a) - 1)\n    return a\n\ndef ms(a, lo, hi):\n    if lo >= hi:\n        return\n    mid = (lo + hi) // 2\n    ms(a, lo, mid)\n    ms(a, mid + 1, hi)\n    tmp = []\n    i = lo\n    j = mid + 1\n    while i <= mid and j <= hi:\n        if a[i] <= a[j]:\n            tmp.append(a[i])\n            i += 1\n        else:\n            tmp.append(a[j])\n            j += 1\n    while i <= mid:\n        tmp.append(a[i])\n        i += 1\n    while j <= hi:\n        tmp.append(a[j])\n        j += 1\n    for k in range(len(tmp)):\n        a[lo + k] = tmp[k]\n",
 	},
 	{
 		"name": "三路快排.py", "cost": 700,

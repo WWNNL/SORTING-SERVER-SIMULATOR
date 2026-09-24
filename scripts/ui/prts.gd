@@ -22,26 +22,59 @@ const TEXT := Color("#9a9a9a")
 const TEXT_HI := Color("#d8d8d8")
 const WHITE := Color("#ffffff")
 const BLACK := Color("#000000")
+## 指示框角标的"未运行"颜色。不能用 LINE_HI（#3d3d3d）——在黑底上几乎看不见，
+## 玩家会以为这个框根本不存在。要暗，但必须一眼能看见。
+const FRAME_IDLE := Color("#6a6a6a")
 
 # 可视化用色
 const BAR := Color("#2e2e2e")
 const BAR_SETTLED := Color("#6a6a6a")
 const BAR_HOT := Color("#ffffff")
-const GRID := Color("#141414")
 
-const FS_TINY := 11
+## 字号只有 12 / 24 / 36 三个合法值。
+##
+## Fusion Pixel 12px 的字形画在 12px 网格上，在设计尺寸下轮廓点坐标全是整数。
+## 只有整数倍字号能保住这个对齐；非整数倍会把轮廓点推到半像素上，而抗锯齿
+## 是关的，于是笔画宽度在 1px / 2px 之间跳，密集汉字里细笔画甚至会整条消失。
+## 实测（font_get_glyph_contours，"国"字 32 个轮廓点里偏离整数网格的点数）：
+##     10px → 27   11px → 27   12px → 0    14px → 25   16px → 25
+##     18px → 24   20px → 25   24px → 0    30px → 24   36px → 0
+## 所以小字号统一用 12。要拉开层级就靠颜色（DIM / TEXT / TEXT_HI / WHITE）
+## 和字间距（spaced_font），不要再动字号——动了就回到糊的状态。
+##
+## 换字号等于换字体：10px 网格的字体只在 10/20/30 上对齐，12px 网格的只在
+## 12/24/36 上对齐。两者不能共用同一套字号常量，PIXEL_FONT_PATH 换哪个，
+## 这里的三个数字就要跟着换。
+const FS_TINY := 12
 const FS_SMALL := 12
-const FS_BODY := 14
-const FS_BIG := 20
-const FS_HUGE := 30
+const FS_BODY := 12
+const FS_BIG := 24
+const FS_HUGE := 36
 
 
 # ---------------------------------------------------------------- 字体
 
+## 项目自带的像素字体。Fusion Pixel 12px，中文点阵，专为 12px 设计，
+## 在 12 / 24 / 36 这种整数倍字号下最锐利。
+## 同族的 10px 变体还在 assets/font 下（旧版用的），但 12px 网格的字号常量
+## 喂给它只会全糊，不要混用。
+const PIXEL_FONT_PATH := "res://assets/font/fusion-pixel-12px-proportional-zh_hans.ttf"
+
+
 static func make_font() -> Font:
+	var f: Font = load(PIXEL_FONT_PATH)
+	if f is FontFile:
+		var ff: FontFile = f
+		# 像素字体必须关抗锯齿、关亚像素定位，否则每个笔画边缘都会糊出一圈灰
+		ff.antialiasing = TextServer.FONT_ANTIALIASING_NONE
+		ff.subpixel_positioning = TextServer.SUBPIXEL_POSITIONING_DISABLED
+		ff.hinting = TextServer.HINTING_NONE
+		ff.force_autohinter = false
+		ff.multichannel_signed_distance_field = false
+		return ff
+
+	# 保底：万一资源被挪走，退回系统宋体（同样是点阵观感）
 	var sf := SystemFont.new()
-	# SimSun 在小字号下本来就是点阵设计，关掉抗锯齿后最接近像素风；
-	# 后面的候选是保底，万一系统没有宋体也不至于变豆腐块。
 	sf.font_names = PackedStringArray([
 		"SimSun", "宋体", "NSimSun", "MS Gothic", "Microsoft YaHei", "sans-serif",
 	])
@@ -361,6 +394,20 @@ static func comma(n: int) -> String:
 		if c % 3 == 0 and i > 0:
 			out = "," + out
 	return ("-" if n < 0 else "") + out
+
+
+## 带一位小数的千分位格式化。
+## 货币读数统一用这个形状（Ð1,234.0），和电费行 "Ð%.1f" 保持一致——
+## 界面上两个钱数一个带小数一个不带，看起来像两种单位。
+static func comma1(v: float) -> String:
+	var a := absf(v)
+	var whole := int(floor(a))
+	var frac := int(round((a - float(whole)) * 10.0))
+	# 四舍五入可能把 9.96 推到 10.0，得进位，否则会印出 ".10"
+	if frac >= 10:
+		whole += 1
+		frac = 0
+	return ("-" if v < 0.0 else "") + comma(whole) + ".%d" % frac
 
 
 ## 只在颜色真的变化时才写主题覆盖。

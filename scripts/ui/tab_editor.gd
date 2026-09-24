@@ -101,25 +101,25 @@ func _build() -> void:
 	var frame := PrtsFrame.new()
 	frame.bracket_len = 12
 	frame.thickness = 2
-	frame.bracket_color = Prts.LINE_HI
+	frame.bracket_color = Prts.FRAME_IDLE
 	wrap.add_child(frame)
 	_frame = frame
 
 	add_child(wrap)
 
-	# ---- 状态行：左侧语法状态，右侧快捷键提示
+	# ---- 状态行：第一行语法状态，第二行快捷键提示
+	# 原来挤在一行里：状态标签被快捷键提示压到只剩 115px（实测与文字
+	# 等宽、零余量），语法报错一长就被 clip 裁掉。拆成两行各放得下。
 	var foot := PanelContainer.new()
 	foot.add_theme_stylebox_override("panel", Prts.flat(Prts.PANEL, Prts.LINE, 0))
-	var foot_row := HBoxContainer.new()
-	foot_row.add_theme_constant_override("separation", 10)
+	var foot_col := VBoxContainer.new()
+	foot_col.add_theme_constant_override("separation", 2)
 	_status = Prts.label("", Prts.FS_TINY, Prts.DIM)
 	_status.clip_text = true
-	_status.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	foot_row.add_child(_status)
+	foot_col.add_child(_status)
 	var keys := Prts.dim_label("Tab 缩进　·　输入时自动补全　·　Ctrl+Space 手动补全　·　Ctrl+S 保存　·　Ctrl+Enter 运行")
-	keys.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-	foot_row.add_child(keys)
-	foot.add_child(Prts.pad(foot_row, 10, 6))
+	foot_col.add_child(keys)
+	foot.add_child(Prts.pad(foot_col, 10, 4))
 	add_child(foot)
 
 
@@ -142,7 +142,7 @@ func get_code() -> String:
 func set_running(on: bool) -> void:
 	if _frame == null:
 		return
-	_frame.bracket_color = Prts.WHITE if on else Prts.LINE_HI
+	_frame.bracket_color = Prts.WHITE if on else Prts.FRAME_IDLE
 	_frame.queue_redraw()
 
 

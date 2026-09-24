@@ -23,16 +23,21 @@ Game="*res://scripts/core/game_state.gd"
 
 window/stretch/mode="canvas_items"
 window/stretch/aspect="expand"
-window/size/viewport_width=1440
-window/size/viewport_height=810
+; 整数倍缩放。默认的 fractional 会把整个画布按 窗口尺寸/逻辑尺寸 缩放，
+; 只要窗口不是逻辑尺寸的整数倍（比如 1458x857 对 1440x810 = 1.0125 倍），
+; 像素字体的每个字形和每条 1px 边框都会被非整数重采样糊掉——
+; 字号算得再准也白搭。integer 下缩放系数只取整数，窗口比逻辑尺寸大时
+; 多出来的部分变成可视面积而不是拉伸，1 个逻辑像素始终等于 1 个物理像素。
+window/stretch/scale_mode="integer"
+window/size/viewport_width=1600
+window/size/viewport_height=900
 window/size/resizable=true
-
-[physics]
-
-3d/physics_engine="Jolt Physics"
 
 [rendering]
 
-rendering_device/driver.windows="d3d12"
+; 原来这里挂着 rendering_device/driver.windows="d3d12"：那是 Forward+ / Mobile 的
+; RenderingDevice 才认的键，本项目跑的是下面的 gl_compatibility，挂着一句话都不生效
+; （实测走 OpenGL 3.3 兼容后端），删掉免得误导。
+; 真要让 GL 兼容渲染器走 ANGLE + D3D12，键名是 rendering/gl_compatibility/driver.windows。
 renderer/rendering_method="gl_compatibility"
 renderer/rendering_method.mobile="gl_compatibility"

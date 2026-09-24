@@ -12,7 +12,7 @@ extends SyntaxHighlighter
 ##   · def / return 单独一色 —— 它们标记"结构"，扫代码时最先要看的就是这些
 ##   · 控制流、逻辑运算、常量各一色 —— 读条件表达式时能一眼分清"流程"和"数据"
 ##   · 内置函数、数组方法、用户函数各一色 —— 区分"服务器给的"和"自己写的"
-##   · 关键字加粗、注释斜体 —— 除了颜色再多一个维度
+##   · 关键字加粗 —— 除了颜色再多一个维度（注释不用斜体，原因见 C_COMMENT 处）
 
 # ---- 颜色
 const C_DEF := Color("#ff9ecd")        ## def / return
@@ -202,7 +202,12 @@ func _paint_comments(starts: PackedInt32Array, string_spans: Array, text: String
 			if li + 1 < starts.size():
 				line_end = starts[li + 1] - 1
 			var entry: Dictionary = _lines.get(li, {})
-			entry[i - line_start] = {"color": C_COMMENT, "italic": true}
+			# 注释刻意不用斜体。像素字体只有一个字面（face_count = 1），
+			# 引擎只能靠横向剪切矩阵合成斜体，而那会让每一行笔画落在不同的
+			# 半像素位置上——抗锯齿是关的，竖笔就会变成粗细不匀的阶梯。
+			# 实测把 italic 打开，注释行的墨迹质心斜率仍是 -0.001 px/行（未倾斜），
+			# 说明当前引擎直接忽略了它；写死 false 是为了将来换字体时不会踩雷。
+			entry[i - line_start] = {"color": C_COMMENT, "italic": false}
 			entry[line_end - line_start] = {"color": C_NAME, "italic": false}
 			_lines[li] = entry
 			i = line_end

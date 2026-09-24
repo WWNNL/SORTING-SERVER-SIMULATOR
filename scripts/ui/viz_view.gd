@@ -328,7 +328,15 @@ func _draw_bars(n: int, span: float, gap: int, base_y: float,
 
 		var c := Prts.BAR
 		var heat := float(_hot.get(i, 0.0))
-		if heat > 0.0:
+		if i == _selected:
+			# 选中的元素由白框标记，这里刻意不让它跟着 _hot 变白。
+			# read 事件同时把下标塞进了 hot_batch，单次事件的强度算出来是 1.0，
+			# 柱子会被涂成纯白 #ffffff——而白框也是 #ffffff，框就整个消失了：
+			# 右边缘落在柱子内部、上下边缘落在柱子根部，全白对白，只剩左边
+			# 那一条线露在黑底上，看起来只是柱子多了个边，读不出"框"。
+			# 压回最暗柱色，白框才立得住，柱子高度也还看得见。
+			c = Prts.BAR
+		elif heat > 0.0:
 			c = Prts.BAR.lerp(Prts.BAR_HOT, clampf(heat, 0.0, 1.0))
 		elif sorted_target.size() == n and int(values[i]) == int(sorted_target[i]):
 			c = Prts.BAR_SETTLED
