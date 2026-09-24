@@ -1,7 +1,10 @@
 class_name RunLineFrame
 extends Control
 ## 编辑器里的"现在跑到第几行"白框 —— 和左侧可视化里框住当前元素的白框同一套语言：
-## 1px 白描边 + 一个指示三角，跟着执行位置走。
+## 1px 白描边 + 一个指向这一行的指示三角，跟着执行位置走。
+##
+## 三角放在**行尾右侧**而不是装订线里：装订线是行号的地盘，
+## 三角压上去正好盖住行号（两位数时盖得严严实实），而右边通常是空的。
 ##
 ## 它挂在 CodeEdit **内部**（作为子节点），所以坐标天然就是编辑器的局部坐标，
 ## 而且会画在文本之上；不需要自己去算装订线宽度、内边距和滚动偏移——
@@ -95,11 +98,29 @@ func _line_rect() -> Rect2:
 	var text := editor.get_line(li)
 	var tail := editor.get_rect_at_line_column(li, text.length())
 	var x0 := float(head.position.x) - PAD_X
-	var x1 := float(tail.position.x) + PAD_X if tail.size.y > 0 else x0 + MIN_W
-	var limit := maxf(x0 + MIN_W, size.x - EDGE)
+	var limit := maxf(x0 + MIN_W, _content_right() - EDGE)
+	# 行尾量不到有两种情况，含义完全不同：
+	#   · 空行：tail 与 head 重合，交给下面的 clamp 撑到 MIN_W
+	#   · 行比可视区还宽：行尾那一列根本不在可见范围内，get_rect_at_line_column 返回空。
+	#     这时要一路框到文本区右边界，否则白框会缩成一个几十像素的小方块，
+	#     看着像"框错了行"。
+	var x1 := limit
+	if tail.size.y > 0:
+		x1 = float(tail.position.x) + PAD_X
 	x1 = clampf(x1, x0 + MIN_W, limit)
 	var y := float(head.position.y) - PAD_Y
 	return Rect2(x0, y, x1 - x0, float(head.size.y) + PAD_Y * 2.0)
+
+
+## 文本区域的右边界（编辑器局部坐标）。竖滚动条是浮在右边缘上的，
+## 白框和三角都不该压到它身上。
+func _content_right() -> float:
+	var limit := size.x
+	if editor != null:
+		var sb := editor.get_v_scroll_bar()
+		if sb != null and sb.position.x > 0.0:
+			limit = minf(limit, sb.position.x)
+	return limit
 
 
 ## 让目标行进入视野。只在这一行本来就在视野外时才滚动——
@@ -127,13 +148,15 @@ func _draw() -> void:
 		return
 	draw_rect(_rect, Prts.WHITE, false, 1.0)
 
-	# 左侧指示三角，画在白框外面（装订线那一侧），和可视化里那个三角呼应
-	var cx := _rect.position.x - 6.0
-	if cx < 4.0:
-		cx = 4.0
+	# 行尾右侧的指示三角，指向这一行（装订线那侧会让出来给行号）
+	var cx := _rect.position.x + _rect.size.x + 6.0
+	if cx + 3.0 > _content_right() - EDGE:
+		# 这一行太长，右边没地方了：只留白框。宁可少一个点缀，
+		# 也不要让三角压到代码或滚动条上。
+		return
 	var cy := _rect.position.y + _rect.size.y * 0.5
 	draw_colored_polygon(PackedVector2Array([
-		Vector2(cx - 3.0, cy - 4.0),
-		Vector2(cx - 3.0, cy + 4.0),
-		Vector2(cx + 3.0, cy),
+		Vector2(cx + 3.0, cy - 4.0),
+		Vector2(cx + 3.0, cy + 4.0),
+		Vector2(cx - 3.0, cy),
 	]), Prts.WHITE)
