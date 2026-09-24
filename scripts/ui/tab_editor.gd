@@ -16,6 +16,7 @@ var _loading := false
 var _flash_left := 0.0
 var _highlighter: PyHighlighter
 var _frame: PrtsFrame
+var _run_line: RunLineFrame
 var _completion: CompletionPopup
 var _candidates: Array = []
 ## 刚确认过一个候选，接下来这次 text_changed 不要再自动弹框
@@ -28,6 +29,9 @@ func _ready() -> void:
 	_completion = CompletionPopup.new()
 	main.add_child(_completion)
 	_build()
+	# 运行位置的更新跟着运行节拍走：运行中每帧一次，状态切换时补一次
+	main.run_tick.connect(_on_run_tick)
+	main.run_state_changed.connect(func(_s): _sync_run_line())
 	load_from_game()
 
 
@@ -96,6 +100,11 @@ func _build() -> void:
 	_edit.add_theme_font_size_override("font_size", Prts.FS_BODY)
 	_edit.text_changed.connect(_on_text_changed)
 	_edit.caret_changed.connect(_on_caret_changed)
+	# 运行位置白框挂在编辑器内部：这样它拿到的就是编辑器局部坐标，
+	# 也会画在文本之上（子节点后画），不必自己算装订线与滚动偏移。
+	_run_line = RunLineFrame.new()
+	_run_line.editor = _edit
+	_edit.add_child(_run_line)
 	wrap.add_child(_edit)
 
 	var frame := PrtsFrame.new()
@@ -144,6 +153,20 @@ func set_running(on: bool) -> void:
 		return
 	_frame.bracket_color = Prts.WHITE if on else Prts.FRAME_IDLE
 	_frame.queue_redraw()
+	_sync_run_line()
+
+
+## 把"现在执行到哪一行"交给白框。
+## 该框哪一行由 Main 判断（运行时跟着取指走、出错停在出错行、跑完不框），
+## 这里只负责传达。
+func _sync_run_line() -> void:
+	if _run_line == null:
+		return
+	_run_line.show_line(main.current_exec_line())
+
+
+func _on_run_tick(_info: Dictionary) -> void:
+	_sync_run_line()
 
 
 func load_from_game() -> void:
@@ -156,6 +179,9 @@ func load_from_game() -> void:
 	_loading = false
 	if _highlighter != null:
 		_highlighter.refresh()
+	# 换了文件，行号全部作废：等下一次运行时重新框
+	if _run_line != null:
+		_run_line.clear()
 	refresh_meters()
 	_check_syntax()
 	_on_caret_changed()

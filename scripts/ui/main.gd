@@ -397,6 +397,22 @@ func state_name() -> String:
 	return String(STATE_NAMES.get(_state, "?"))
 
 
+## 当前正在执行的源码行（1 起），用来在编辑器里框出运行位置。0 = 没有可框的行。
+##
+## 只回答"该框哪一行"，不管怎么画：运行/暂停时跟着 VM 的取指位置走，
+## 出错时停在出错那一行（比停在崩溃前的最后一条指令更有用），
+## 跑完或待机就没有可框的行了。
+func current_exec_line() -> int:
+	if _vm == null:
+		return 0
+	match _state:
+		ST_RUNNING, ST_PAUSED:
+			return _vm.current_line()
+		ST_ERROR:
+			return int(_vm.error["line"])
+	return 0
+
+
 func get_vm() -> PyVM:
 	return _vm
 
