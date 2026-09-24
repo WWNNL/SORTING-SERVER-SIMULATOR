@@ -1,0 +1,10 @@
+# Godot 4+ specific ignores
+.godot/
+/android/
+.mcp/
+
+# 本地测试用的假 APPDATA
+.testdata/
+
+# Windows 资源管理器自己生成的文件夹视图配置，与项目无关
+desktop.ini
