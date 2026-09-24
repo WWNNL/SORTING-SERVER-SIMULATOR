@@ -30,6 +30,7 @@ func _ready() -> void:
 	main.run_tick.connect(_on_tick)
 	main.run_state_changed.connect(func(_s): refresh())
 	main.console_line.connect(_on_console)
+	Game.speed_changed.connect(refresh)
 	set_process(true)
 	refresh()
 
@@ -86,8 +87,8 @@ func _build() -> void:
 	grid.add_theme_constant_override("separation", 4)
 	for key in [
 		["state", "状态"], ["stage", "当前阶段"], ["n", "元素数量"],
-		["steps", "执行步数"], ["cmp", "比较次数"], ["ops", "数组读写"],
-		["budget", "效率预算"], ["time", "已用时间"],
+		["cpu", "运行速度"], ["steps", "执行步数"], ["cmp", "比较次数"],
+		["ops", "数组读写"], ["budget", "效率预算"], ["time", "已用时间"],
 		["bill", "本次电费"], ["bill_rate", "耗电成本"],
 		["paid_total", "累计电费"], ["depth", "调用深度"], ["line", "当前行"],
 	]:
@@ -156,6 +157,8 @@ func _update_fast() -> void:
 	_put("stage", "%s · %s" % [
 		String(Game.stage_info().get("name", "")), String(Game.stage_info().get("algo", ""))])
 	_put("n", "%d 个" % int(info["n"]))
+	_put("cpu", "%s 步 / 秒%s" % [Prts.comma(Game.cpu_speed()),
+		"" if Game.cpu_speed() >= Game.cpu_rate() else "（额定 %s）" % Prts.comma(Game.cpu_rate())])
 	_put("steps", Prts.comma(int(info["steps"])))
 	_put("cmp", Prts.comma(int(info["comparisons"])))
 	_put("ops", Prts.comma(int(info["ops"])))

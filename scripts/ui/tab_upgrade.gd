@@ -11,12 +11,15 @@ var _power_bar: ProgressBar
 var _power_text: Label
 var _power_hint: Label
 var _cards := {}
+## 主题颜色覆盖的缓存，避免拖滑条时反复触发主题重解析
+var _color_cache := {}
 
 
 func _ready() -> void:
 	add_theme_constant_override("separation", 10)
 	_build()
 	Game.tiers_changed.connect(refresh)
+	Game.speed_changed.connect(_refresh_speed)
 	Game.coins_changed.connect(func(_c): refresh())
 	refresh()
 
@@ -102,15 +105,106 @@ func _make_card(part: String) -> Dictionary:
 
 	col.add_child(body)
 
+	var card := {
+		"root": pc, "tier": tier_l, "cur_v": cur_v, "cur_w": cur_w,
+		"nxt_v": nxt_v, "nxt_w": nxt_w, "btn": null,
+		"speed_box": null, "speed_slider": null, "speed_value": null, "speed_hint": null,
+	}
+
+	# 处理器多一条运行速度滑条：硬件只决定上限，滑条负责当下跑多快。
+	if part == "cpu":
+		var block := _make_speed_block()
+		for k in block:
+			card[k] = block[k]
+		col.add_child(block["speed_box"])
+
 	var btn := Prts.button("升级", 96)
 	btn.pressed.connect(_on_buy.bind(part))
 	col.add_child(btn)
+	card["btn"] = btn
 
 	pc.add_child(Prts.pad(col, 12, 10))
-	return {
-		"root": pc, "tier": tier_l, "cur_v": cur_v, "cur_w": cur_w,
-		"nxt_v": nxt_v, "nxt_w": nxt_w, "btn": btn,
-	}
+	return card
+
+
+## 运行速度滑条。只允许往下调（上限是硬件额定速度），
+## 所以它是"看得更清楚"的工具，不是变快的捷径。
+func _make_speed_block() -> Dictionary:
+	var box := VBoxContainer.new()
+	box.add_theme_constant_override("separation", 4)
+
+	box.add_child(Prts.hline())
+
+	var head := HBoxContainer.new()
+	var cap := Prts.dim_label("运行速度")
+	cap.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	head.add_child(cap)
+	var value := Prts.label("", Prts.FS_SMALL, Prts.TEXT_HI)
+	value.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	head.add_child(value)
+	box.add_child(head)
+
+	var slider := HSlider.new()
+	slider.min_value = 0.0
+	slider.max_value = 1.0
+	slider.step = 0.001
+	slider.value = 1.0
+	slider.custom_minimum_size = Vector2(0, 14)
+	slider.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	slider.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+	# 和按钮一致：键盘焦点框在这套直角界面里只会多出一圈脏线
+	slider.focus_mode = Control.FOCUS_NONE
+	slider.value_changed.connect(_on_speed_changed)
+	# 拖动过程中每帧写盘不值得，松手再存
+	slider.drag_ended.connect(_on_speed_drag_ended)
+	box.add_child(slider)
+
+	var hint := Prts.dim_label("", Prts.FS_TINY)
+	hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	box.add_child(hint)
+
+	return {"speed_box": box, "speed_slider": slider, "speed_value": value, "speed_hint": hint}
+
+
+# ---------------------------------------------------------------- 速度滑条
+
+## 滑条位置（0~1）↔ 速度比例。用对数映射：额定 130000 步/秒时，
+## 线性滑条最左边的 1% 就要跨越 1300 步，低端根本没法微调。
+static func ratio_to_pos(r: float) -> float:
+	return log(r / Game.MIN_CPU_RATIO) / log(1.0 / Game.MIN_CPU_RATIO)
+
+
+static func pos_to_ratio(p: float) -> float:
+	return Game.MIN_CPU_RATIO * pow(1.0 / Game.MIN_CPU_RATIO, p)
+
+
+func _on_speed_changed(pos: float) -> void:
+	# 值变了 Game 会发 speed_changed，界面在那里统一刷新，这里不重复刷。
+	Game.set_cpu_ratio(pos_to_ratio(pos))
+
+
+func _on_speed_drag_ended(_changed: bool) -> void:
+	Game.save_game()
+
+
+func _refresh_speed() -> void:
+	var card: Dictionary = _cards.get("cpu", {})
+	if card.is_empty() or card.get("speed_slider") == null:
+		return
+	var slider: HSlider = card["speed_slider"]
+	var value: Label = card["speed_value"]
+	# 用 no_signal 回写位置：否则 refresh 会反过来触发 value_changed，
+	# 把浮点误差写进 Game.cpu_ratio。
+	slider.set_value_no_signal(ratio_to_pos(Game.cpu_ratio))
+
+	var now := Game.cpu_speed()
+	var rated := Game.cpu_rate()
+	value.text = "%s 步 / 秒" % Prts.comma(now)
+	Prts.set_color_cached(value, "speed", Prts.WHITE if now >= rated else Prts.TEXT_HI,
+		_color_cache)
+	(card["speed_hint"] as Label).text = \
+		"额定 %s 步 / 秒，当前 %d%%。调慢只是看得更清楚：同一份工作耗时变长，总电费反而更高。" % [
+			Prts.comma(rated), Game.cpu_percent()]
 
 
 func refresh() -> void:
@@ -133,6 +227,7 @@ func refresh() -> void:
 
 	for part in ServerSpec.PARTS:
 		_refresh_card(part)
+	_refresh_speed()
 
 
 func _refresh_card(part: String) -> void:

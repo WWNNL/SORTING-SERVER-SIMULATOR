@@ -8,17 +8,34 @@ signal coins_changed(coins: int)
 signal tiers_changed()
 signal files_changed()
 signal stage_changed(index: int)
+## 运行速度变了。刻意不复用 tiers_changed：拖滑条并没有换硬件，
+## 不该把整页硬件卡片和编辑器的资源条全部重建一遍。
+signal speed_changed()
 
 const SAVE_PATH := "user://save.json"
 const ENTRY := "sort"
 
+## CPU 滑条能调到的下限比例。再低就没有观察价值了
+## （额定 130000 步/秒时是 1300 步/秒）。
+const MIN_CPU_RATIO := 0.01
+
 var coins := 0
 var tiers := {"cpu": 0, "ram": 0, "disk": 0, "psu": 0}
-## 已通关的阶段数量。当前阶段 = min(cleared, 最后一关)，
-## 所以数据规模不可选——它完全由进度决定。
+## 已通关的阶段数量。进度所在的阶段 = min(cleared, 最后一关)，
+## 所以数据规模不可选——它完全由进度决定（重刷旧关卡不会改动它）。
 var cleared := 0
+## 玩家选中的阶段下标，-1 表示"跟着进度走"。
+## 只能选已经通过的阶段或当前进度那一关；重刷照样给收益，
+## 但既不推进进度，也不会把进度往回退。
+var stage_sel := -1
+## CPU 运行速度比例，1.0 = 跑满额定速度。滑条只允许往下调：
+## 上限由硬件决定，否则"升级处理器"就失去意义了。
+var cpu_ratio := 1.0
 ## 每个阶段的历史最好成绩：阶段下标 -> 最少的数组读写次数
 var stage_best := {}
+## 上面那条成绩是在多大的数据规模下取得的。
+## 阶段改过 n 之后旧成绩就不再可比，所以显示时要标出来，而不是当成同一回事。
+var stage_best_n := {}
 var files: Array = []
 var current_file := 0
 var stats := {
@@ -45,8 +62,33 @@ func tier_of(part: String) -> int:
 	return int(tiers.get(part, 0))
 
 
-func cpu_speed() -> int:
+## CPU 的额定速度，由硬件等级决定。
+func cpu_rate() -> int:
 	return int(ServerSpec.spec("cpu", tier_of("cpu"))["speed"])
+
+
+## 当前实际允许的每秒指令数（滑条按比例降速）。
+##
+## 调慢只是"看得更清楚"，不是收益上的捷径：同一份工作的总耗电
+## = 功率 × 耗时，调慢以后耗时变长，总电费反而更高；
+## 而效率门槛只看数组读写次数，与速度无关。
+func cpu_speed() -> int:
+	var rated := cpu_rate()
+	if cpu_ratio >= 1.0:
+		return rated
+	return clampi(int(round(float(rated) * cpu_ratio)), 1, rated)
+
+
+func cpu_percent() -> int:
+	return int(round(cpu_ratio * 100.0))
+
+
+func set_cpu_ratio(r: float) -> void:
+	var clamped := clampf(r, MIN_CPU_RATIO, 1.0)
+	if is_equal_approx(clamped, cpu_ratio):
+		return
+	cpu_ratio = clamped
+	speed_changed.emit()
 
 
 func ram_bytes() -> int:
@@ -252,9 +294,49 @@ func _name_taken(name: String) -> bool:
 
 # ---------------------------------------------------------------- 阶段进度
 
-## 当前阶段下标。通关最后一关后停在最后一关，可以反复刷收益。
-func stage_index() -> int:
+## 进度所在的阶段：已通关的数量就是它的下标，所以它永远指向"下一关"。
+## 通关最后一关后停在那里，可以反复刷收益。
+func frontier_index() -> int:
 	return clampi(cleared, 0, ServerSpec.stage_count() - 1)
+
+
+## 当前要挑战的阶段。默认跟着进度，玩家也可以挑一个已通过的阶段重刷。
+func stage_index() -> int:
+	if stage_sel < 0:
+		return frontier_index()
+	return clampi(stage_sel, 0, frontier_index())
+
+
+## 现在是不是在重刷旧关卡（不推进进度的那一种）。
+func is_replay() -> bool:
+	return stage_index() < frontier_index()
+
+
+## 这个阶段能不能选。已经通过的阶段和当前进度那一关都可以，往后的不行。
+func can_select_stage(i: int) -> bool:
+	return i >= 0 and i < ServerSpec.stage_count() and i <= frontier_index()
+
+
+## 选中一个阶段来挑战。返回是否真的换了。选当前进度那一关等于"回到进度"。
+func select_stage(i: int) -> bool:
+	if not can_select_stage(i):
+		return false
+	if i == stage_index():
+		return false
+	stage_sel = -1 if i >= frontier_index() else i
+	stage_changed.emit(cleared)
+	save_game()
+	return true
+
+
+## 回到"跟着进度走"。
+func follow_progress() -> bool:
+	if stage_sel < 0:
+		return false
+	stage_sel = -1
+	stage_changed.emit(cleared)
+	save_game()
+	return true
 
 
 func stage_info() -> Dictionary:
@@ -269,30 +351,48 @@ func stage_ops_budget() -> int:
 	return int(stage_info().get("ops", 999999))
 
 
+## 进度是不是已经到最后一关（没有下一关可解锁了）。
 func is_final_stage() -> bool:
-	return stage_index() >= ServerSpec.stage_count() - 1
+	return frontier_index() >= ServerSpec.stage_count() - 1
 
 
 ## 完成一次任务后推进进度。返回是否真的解锁了新阶段。
+##
+## 判据是"进度那一关"而不是"玩家选中的那一关"：重刷旧关卡时
+## index != frontier_index()，于是这里直接返回 false——既不加进度，
+## 也绝不会把 cleared 往回写。
 func clear_stage(index: int) -> bool:
-	if index != stage_index():
+	if index != frontier_index():
 		return false
 	if is_final_stage():
 		return false
 	cleared = index + 1
+	stage_sel = -1
 	stage_changed.emit(cleared)
 	save_game()
 	return true
 
 
-func record_stage(index: int, ops: int) -> void:
+## 记一次成绩。只有同一数据规模下的成绩才互相比较：
+## 规模变了（阶段调整过 n）就重新开始记，否则会拿 32 个元素的旧纪录
+## 去和 40 个元素的门槛并列显示，看着像"这一关变难了"。
+func record_stage(index: int, ops: int, n: int) -> void:
 	var key := str(index)
-	if not stage_best.has(key) or ops < int(stage_best[key]):
+	if int(stage_best_n.get(key, 0)) != n or not stage_best.has(key):
+		stage_best[key] = ops
+		stage_best_n[key] = n
+		return
+	if ops < int(stage_best[key]):
 		stage_best[key] = ops
 
 
 func stage_best_ops(index: int) -> int:
 	return int(stage_best.get(str(index), 0))
+
+
+## 上面那条成绩的数据规模。0 表示老存档里的记录，规模未知。
+func stage_best_size(index: int) -> int:
+	return int(stage_best_n.get(str(index), 0))
 
 
 ## 电费扣款。余额扣到 0 为止，返回实际扣掉多少。
@@ -316,7 +416,10 @@ func save_game() -> void:
 		"coins": coins,
 		"tiers": tiers,
 		"cleared": cleared,
+		"stage_sel": stage_sel,
+		"cpu_ratio": cpu_ratio,
 		"stage_best": stage_best,
+		"stage_best_n": stage_best_n,
 		"files": files,
 		"current_file": current_file,
 		"stats": stats,
@@ -347,11 +450,19 @@ func load_game() -> void:
 	coins = int(d.get("coins", 0))
 	cleared = clampi(int(d.get("cleared", 0)), 0, ServerSpec.stage_count() - 1)
 	current_file = int(d.get("current_file", 0))
+	# 老存档没有这两个字段：默认"跟着进度走 + 跑满速度"
+	stage_sel = clampi(int(d.get("stage_sel", -1)), -1, frontier_index())
+	cpu_ratio = clampf(float(d.get("cpu_ratio", 1.0)), MIN_CPU_RATIO, 1.0)
 
 	if d.get("stage_best") is Dictionary:
 		stage_best = {}
 		for k in (d["stage_best"] as Dictionary):
 			stage_best[str(k)] = int((d["stage_best"] as Dictionary)[k])
+	# 老存档只存了成绩、没存规模：留 0 表示"规模未知"，界面上会标成旧记录
+	stage_best_n = {}
+	if d.get("stage_best_n") is Dictionary:
+		for k in (d["stage_best_n"] as Dictionary):
+			stage_best_n[str(k)] = int((d["stage_best_n"] as Dictionary)[k])
 
 	if d.get("tiers") is Dictionary:
 		for p in ServerSpec.PARTS:
@@ -384,7 +495,10 @@ func reset_all() -> void:
 	coins = 0
 	tiers = {"cpu": 0, "ram": 0, "disk": 0, "psu": 0}
 	cleared = 0
+	stage_sel = -1
+	cpu_ratio = 1.0
 	stage_best = {}
+	stage_best_n = {}
 	current_file = 0
 	stats = {
 		"runs": 0, "completed": 0, "failed": 0, "total_earned": 0,
@@ -396,6 +510,7 @@ func reset_all() -> void:
 	tiers_changed.emit()
 	stage_changed.emit(cleared)
 	files_changed.emit()
+	speed_changed.emit()
 	save_game()
 
 

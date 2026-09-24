@@ -147,8 +147,35 @@ static func build_theme() -> Theme:
 	_theme_inputs(t)
 	_theme_lists(t)
 	_theme_code_edit(t)
+	_theme_sliders(t)
 	_theme_misc(t)
 	return t
+
+
+## 滑条。默认主题的轨道是圆角胶囊、滑块是圆形图标，和这里的直角黑白完全不搭，
+## 所以轨道做成和 ProgressBar 同一种"凹槽"，滑块换成纯白方块。
+##
+## 注意轨道的粗细：Slider 是把轨道样式盒按**最小高度**居中画的
+## （不是铺满控件高度），而样式盒的最小高度来自 content margin 与边框的较大者。
+## 所以凹槽的厚度必须用 content margin 给（这里上下各 4 = 8px），
+## 只写 custom_minimum_size 或者指望它被拉伸都只会得到一条 1px 的线。
+static func _theme_sliders(t: Theme) -> void:
+	t.set_stylebox("slider", "HSlider", flat(RAISED, LINE, 1, 0, 4))
+	t.set_stylebox("grabber_area", "HSlider", flat(TEXT_HI, Color(0, 0, 0, 0), 0, 0, 4))
+	t.set_stylebox("grabber_area_highlight", "HSlider",
+		flat(WHITE, Color(0, 0, 0, 0), 0, 0, 4))
+	t.set_icon("grabber", "HSlider", square_grabber(Vector2i(6, 14), WHITE))
+	t.set_icon("grabber_highlight", "HSlider", square_grabber(Vector2i(6, 14), WHITE))
+	t.set_icon("grabber_disabled", "HSlider", square_grabber(Vector2i(6, 14), DIM))
+	t.set_constant("center_grabber", "HSlider", 1)
+
+
+## 生成一个纯色方块贴图。滑块的形状来自图标而不是样式盒，
+## 不生成一个的话默认主题会画一个圆角胶囊，破坏直角黑白的统一。
+static func square_grabber(size: Vector2i, color: Color) -> ImageTexture:
+	var img := Image.create(size.x, size.y, false, Image.FORMAT_RGBA8)
+	img.fill(color)
+	return ImageTexture.create_from_image(img)
 
 
 ## 代码补全弹框。默认主题是圆角浅色，和这里的直角黑白完全不搭。

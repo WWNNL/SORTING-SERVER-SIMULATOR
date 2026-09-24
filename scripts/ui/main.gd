@@ -80,6 +80,7 @@ func _ready() -> void:
 
 	Game.coins_changed.connect(_on_coins_changed)
 	Game.tiers_changed.connect(_refresh_hardware)
+	Game.speed_changed.connect(_refresh_hardware_chips_only)
 	Game.stage_changed.connect(_on_stage_changed)
 	_tabs.tab_changed.connect(_on_tab_changed)
 
@@ -169,10 +170,12 @@ func _build_topbar() -> Control:
 	var chips := HBoxContainer.new()
 	chips.add_theme_constant_override("separation", 0)
 	_chip["power"] = _make_chip("供电", "0W / 0W", 108)
+	# 处理器单独一格：滑条可以在额定速度以下调速，不显示出来玩家不知道自己在跑多快
+	_chip["cpu"] = _make_chip("处理器", "0 步 / 秒", 118)
 	_chip["ram"] = _make_chip("内存", "0 / 0 B", 108)
 	_chip["disk"] = _make_chip("硬盘", "0 / 0 B", 108)
 	_chip["state"] = _make_chip("状态", "待机", 88)
-	for k in ["power", "ram", "disk", "state"]:
+	for k in ["power", "cpu", "ram", "disk", "state"]:
 		chips.add_child(_chip[k]["root"])
 	row.add_child(chips)
 
@@ -466,6 +469,40 @@ func _on_tab_changed(idx: int) -> void:
 	var c := _tabs.get_child(idx)
 	if c != null and c.has_method("refresh"):
 		c.call("refresh")
+
+
+## 换一个阶段来挑战。只能选已经通过的阶段（或当前进度那一关）。
+##
+## 和切换算法文件同理：阶段换了，旧题目就作废，必须把当前这次跑停掉，
+## 否则可视化上跑的还是上一个阶段的数据规模。
+func select_stage(index: int) -> void:
+	if not Game.can_select_stage(index):
+		log_line("阶段 %02d 还没解锁，先把当前这关过了。" % (index + 1), "warn")
+		return
+	if index == Game.stage_index():
+		return
+
+	if _vm != null and (_state == ST_RUNNING or _state == ST_PAUSED):
+		_vm.status = "halted"
+		_vm.halted_reason = "切换阶段"
+		log_line("已结束当前运行，换阶段。", "sys")
+
+	Game.select_stage(index)
+	# 换了阶段，旧题目作废。新题目等玩家点「运行」时再生成。
+	_clear_task()
+	_state = ST_IDLE
+	_emit_state()
+	_refresh_stage()
+
+	var s := Game.stage_info()
+	if Game.is_replay():
+		log_line("已回到阶段 %02d「%s」重刷：%d 个元素，效率预算 %d。收益照给，进度不动。"
+			% [index + 1, String(s.get("algo", "")), int(s.get("n", 0)),
+				int(s.get("ops", 0))], "sys")
+	else:
+		log_line("已回到当前进度：阶段 %02d「%s」· %d 个元素 · 效率预算 %d。"
+			% [index + 1, String(s.get("algo", "")), int(s.get("n", 0)),
+				int(s.get("ops", 0))], "sys")
 
 
 # ================================================================ 运行控制
@@ -800,7 +837,7 @@ func _resolve_success() -> void:
 	Game.grant(base + bonus)
 	Game.stats["completed"] = int(Game.stats["completed"]) + 1
 	Game.record_result(Game.current_file, _run_n, ops, base + bonus)
-	Game.record_stage(_run_stage, ops)
+	Game.record_stage(_run_stage, ops, _run_n)
 	_state = ST_DONE
 
 	log_line("排序完成 · %d 个元素 / %d 步 / %d 次比较 / %d 次数组读写 → 奖励 Ð%s"
@@ -816,11 +853,16 @@ func _resolve_success() -> void:
 		log_line("效率达标，额外奖励 Ð%s。" % Prts.comma(bonus), "ok")
 
 	var was_stage := _run_stage
+	# 先记下这是不是重刷：clear_stage 推进进度后会把选择复位，"是不是重刷"就看不出来了
+	var was_replay := was_stage < Game.frontier_index()
 	if Game.clear_stage(was_stage):
 		var nxt := Game.stage_info()
 		log_line("阶段 %02d 通过 —— 解锁阶段 %02d「%s」· %d 个元素 · 效率预算 %d。"
 			% [was_stage + 1, Game.stage_index() + 1, String(nxt.get("algo", "")),
 				int(nxt.get("n", 0)), int(nxt.get("ops", 0))], "ok")
+	elif was_replay:
+		log_line("阶段 %02d 重刷达标：成绩已记录，进度停在阶段 %02d。"
+			% [was_stage + 1, Game.frontier_index() + 1], "sys")
 	elif Game.is_final_stage():
 		log_line("已经是最后一个阶段，可以反复挑战刷收益。", "sys")
 
@@ -845,10 +887,14 @@ func _refresh_stage() -> void:
 	if _stage_title == null:
 		return
 	var s := Game.stage_info()
-	var idx := Game.stage_index()
-	_stage_title.text = "%s · %s" % [String(s.get("name", "")), String(s.get("algo", ""))]
-	_stage_detail.text = "%d 个元素　·　效率预算 %d 次数组读写　·　%d / %d 关" % [
-		int(s.get("n", 0)), int(s.get("ops", 0)), idx + 1, ServerSpec.stage_count()]
+	var replay := Game.is_replay()
+	_stage_title.text = "%s · %s%s" % [
+		String(s.get("name", "")), String(s.get("algo", "")),
+		"（重刷）" if replay else ""]
+	Prts.set_color_cached(_stage_title, "stage_title",
+		Prts.TEXT_HI if replay else Prts.WHITE, _color_cache)
+	_stage_detail.text = "%d 个元素　·　效率预算 %d 次数组读写　·　已通过 %d / %d 关" % [
+		int(s.get("n", 0)), int(s.get("ops", 0)), Game.cleared, ServerSpec.stage_count()]
 	_update_stage_badge(-1)
 
 
@@ -896,6 +942,17 @@ func _refresh_hardware_chips_only() -> void:
 	var pl: Label = _chip["power"]["value"]
 	pl.text = "%dW / %dW" % [draw, psu]
 	Prts.set_color_cached(pl, "power", Prts.TEXT_HI if draw <= psu else Prts.WHITE, _color_cache)
+
+	var cl: Label = _chip["cpu"]["value"]
+	var now := Game.cpu_speed()
+	var rated := Game.cpu_rate()
+	if now >= rated:
+		cl.text = "%s 步 / 秒" % Prts.comma(now)
+	else:
+		# 调速后写成"当前 / 额定"，一眼看出是滑条压下来的还是硬件就这么多
+		cl.text = "%s / %s 步 / 秒" % [Prts.comma(now), Prts.comma(rated)]
+	Prts.set_color_cached(cl, "cpu", Prts.TEXT_HI if now >= rated else Prts.WHITE,
+		_color_cache)
 
 	var rl: Label = _chip["ram"]["value"]
 	var used := 0
