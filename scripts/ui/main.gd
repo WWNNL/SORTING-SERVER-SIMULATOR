@@ -44,11 +44,14 @@ var _pay_accum := 0.0
 
 # --- 界面引用
 var _viz: VizView
+var _viz_frame: PrtsFrame
 var _coin_label: Label
 var _chip := {}
 var _btn_run: Button
 var _btn_pause: Button
+var _btn_step: Button
 var _btn_stop: Button
+var _step_pending := false
 var _stat := {}
 var _stage_title: Label
 var _stage_detail: Label
@@ -93,11 +96,11 @@ func _ready() -> void:
 		log_line("供电不足：整机需要 %dW，电源只有 %dW。请到「升级配置」处理。"
 			% [Game.total_draw(), Game.psu_watts()], "error")
 	log_line("服务器会调用 sort(a)，请让 a 变成升序。", "sys")
+	log_line("按「运行」生成题目并开始。", "sys")
 
-	# 开局就把任务装载好，让玩家一眼看到可视化
-	if _prepare_run():
-		_state = ST_PAUSED
-		_emit_state()
+	# 开局不生成题目：数据只在点「运行」时才产生
+	_clear_task()
+	_emit_state()
 
 
 # ================================================================ 界面搭建
@@ -217,7 +220,9 @@ func _build_left() -> Control:
 	var frame := PrtsFrame.new()
 	frame.bracket_len = 12
 	frame.thickness = 2
+	frame.bracket_color = Prts.LINE_HI
 	viz_wrap.add_child(frame)
+	_viz_frame = frame
 
 	box.add_child(viz_wrap)
 	box.add_child(_build_controls())
@@ -271,6 +276,10 @@ func _build_controls() -> Control:
 	_btn_pause = Prts.button("|| 暂停", 96)
 	_btn_pause.pressed.connect(_on_pause_pressed)
 	row.add_child(_btn_pause)
+
+	_btn_step = Prts.button(">| 单步", 96)
+	_btn_step.pressed.connect(_on_step_pressed)
+	row.add_child(_btn_step)
 
 	_btn_stop = Prts.button("X 停止", 96)
 	_btn_stop.pressed.connect(_on_stop_pressed)
@@ -442,11 +451,9 @@ func switch_file(index: int) -> void:
 	Game.current_file = index
 	reload_editor()
 
-	# 重新生成排列：换算法等于换一次全新的任务数据
-	if _prepare_run():
-		_state = ST_PAUSED
-	else:
-		_state = ST_IDLE
+	# 换了算法，旧题目作废。新题目等玩家点「运行」时再生成。
+	_clear_task()
+	_state = ST_IDLE
 	_emit_state()
 	Game.save_game()
 
@@ -483,20 +490,53 @@ func _on_stop_pressed() -> void:
 	if _vm == null:
 		return
 	if _state == ST_RUNNING or _state == ST_PAUSED:
-		_vm.status = "halted"
-		_vm.halted_reason = "手动停止"
 		log_line("已手动停止本次运行。", "warn")
+	_clear_task()
 	_state = ST_IDLE
+	_emit_state()
+
+
+## 单步：没有题目就先生成一局并停住，之后每次只推进一条指令。
+func _on_step_pressed() -> void:
+	if _vm == null:
+		if not _prepare_run():
+			return
+		_state = ST_PAUSED
+		_emit_state()
+		return
+	if _state == ST_DONE or _state == ST_ERROR:
+		return
+	_step_pending = true
+	if _state == ST_RUNNING:
+		_state = ST_PAUSED
 	_emit_state()
 
 
 func _on_stage_changed(_index: int) -> void:
 	_refresh_stage()
-	# 阶段变了，当前这一局的规模就过期了，重新装载
-	if _state != ST_RUNNING:
-		if _prepare_run():
-			_state = ST_PAUSED
-			_emit_state()
+	# 阶段变了，旧题目作废。新题目等玩家点「运行」时再生成。
+	_clear_task()
+	_state = ST_IDLE
+	_emit_state()
+
+
+## 清掉当前题目。
+##
+## 数据只在点「运行」时才生成：这样"开始一局"是一个明确的动作，
+## 也避免了改代码、换算法、换阶段时后台悄悄生成一堆没人看的排列。
+func _clear_task() -> void:
+	_vm = null
+	_step_pending = false
+	_run_n = 0
+	_bill_accrued = 0.0
+	_bill_paid = 0.0
+	_pay_accum = 0.0
+	_elapsed = 0.0
+	_step_accum = 0.0
+	if _viz != null:
+		_viz.clear()
+	_update_stat_labels(get_run_info())
+	_refresh_hardware_chips_only()
 
 
 ## 装配一次运行。任何一项资源不满足都在这里拦下来，并给出可执行的建议。
@@ -608,6 +648,13 @@ func _emit_state() -> void:
 		var sc := Prts.WHITE if _state == ST_RUNNING else (
 			Prts.TEXT_HI if _state != ST_ERROR else Prts.TEXT)
 		Prts.set_color_cached(l, "state", sc, _color_cache)
+	# 运行指示框：可视化区和编辑器区的角标同步点亮
+	var running := _state == ST_RUNNING
+	if _viz_frame != null:
+		_viz_frame.bracket_color = Prts.WHITE if running else Prts.LINE_HI
+		_viz_frame.queue_redraw()
+	if _tab_editor != null:
+		_tab_editor.set_running(running)
 
 
 func _refresh_buttons() -> void:
@@ -615,13 +662,28 @@ func _refresh_buttons() -> void:
 		return
 	_btn_run.disabled = _state == ST_RUNNING
 	_btn_pause.disabled = _state != ST_RUNNING
+	_btn_step.disabled = _state == ST_RUNNING
 	_btn_stop.disabled = _vm == null or (_state != ST_RUNNING and _state != ST_PAUSED)
 
 
 # ================================================================ 主循环
 
 func _process(delta: float) -> void:
-	if _vm == null or _state != ST_RUNNING:
+	if _vm == null:
+		return
+
+	# 单步：无论当前什么状态都只推进一条指令
+	if _step_pending:
+		_step_pending = false
+		_vm.run_batch(1)
+		_consume_events()
+		if _vm.status != "running":
+			_finish_run()
+		else:
+			_emit_tick()
+		return
+
+	if _state != ST_RUNNING:
 		return
 
 	# 截断异常长帧，避免指令暴冲（见 MAX_STEP_DELTA 的说明）

@@ -15,6 +15,7 @@ var _caret_text: Label
 var _loading := false
 var _flash_left := 0.0
 var _highlighter: PyHighlighter
+var _frame: PrtsFrame
 var _completion: CompletionPopup
 var _candidates: Array = []
 ## 刚确认过一个候选，接下来这次 text_changed 不要再自动弹框
@@ -98,10 +99,11 @@ func _build() -> void:
 	wrap.add_child(_edit)
 
 	var frame := PrtsFrame.new()
-	frame.bracket_len = 10
+	frame.bracket_len = 12
+	frame.thickness = 2
 	frame.bracket_color = Prts.LINE_HI
-	frame.draw_border = false
 	wrap.add_child(frame)
+	_frame = frame
 
 	add_child(wrap)
 
@@ -133,6 +135,15 @@ func _make_highlighter() -> SyntaxHighlighter:
 
 func get_code() -> String:
 	return _edit.text if _edit != null else ""
+
+
+## 运行指示框：正在跑的时候角标点亮，和左侧可视化面板保持一致。
+## 这样不切回可视化页也能一眼看出服务器是不是在跑。
+func set_running(on: bool) -> void:
+	if _frame == null:
+		return
+	_frame.bracket_color = Prts.WHITE if on else Prts.LINE_HI
+	_frame.queue_redraw()
 
 
 func load_from_game() -> void:

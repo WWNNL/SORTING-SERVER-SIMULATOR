@@ -17,15 +17,18 @@ const PAD_TOP := 10.0
 const LABEL_PAD_TOP := 26.0  ## 标数值时顶部要多留一行
 const AXIS_H := 20.0
 
-## 希望在飞的元素数量。时长 = 这个数 ÷ 每秒事件数。
-const MOVE_BUDGET := 20.0
-const MOVE_MAX_DURATION := 0.22
-const MOVE_MIN_DURATION := 0.03
-const MAX_MOVES := 64
-
-## 最多同时标出几个落点。全标出来的话，高速运行时会有几十条贯穿全高的
-## 方框叠在一起，看着就像一堆没刷新掉的细线。
+## 同帧最多标出几个落点。全标出来的话会有几十条方框叠在一起，
+## 看着就像一堆没刷新掉的细线。
 const MAX_TARGETS := 6
+## 元素飞行时长。刻意用固定值，不做"按事件速率反推时长"那一套——
+## 那样在高速时会把时长压到几十毫秒，元素一闪而过，看起来只是抖。
+## 现在是控制**入场数量**：少数元素完整飞完全程，整体呈现为平滑的流动。
+const MOVE_DURATION := 0.17
+## 同时在飞的元素上限
+const MAX_INFLIGHT := 20
+## 同帧最多点亮多少个下标。高速运行时每秒上千次读写，全点亮会糊成一片白，
+## 反而什么都看不出来。
+const MAX_HOT := 26
 
 var values: Array = []
 var sorted_target: Array = []
@@ -38,11 +41,9 @@ var _selected_ttl := 0.0
 var _max_value := 1
 var _settled_count := 0
 
-## 自适应时长
-var _duration := MOVE_MAX_DURATION
-var _move_rate := 0.0          ## 每秒移动事件数（指数滑动平均）
-var _pending_moves := 0        ## 本采样周期内收到的移动事件数
-var _sample_accum := 0.0
+## 诊断用：本帧收到的移动事件数、被丢掉的数量
+var _moves_seen := 0
+var _moves_dropped := 0
 
 
 func _init() -> void:
@@ -101,34 +102,101 @@ func selected_index() -> int:
 
 
 func move_duration() -> float:
-	return _duration
+	return MOVE_DURATION
+
+
+## 本帧收到的移动事件数 / 被丢弃的数量，供性能观察用
+func move_stats() -> Dictionary:
+	return {"seen": _moves_seen, "dropped": _moves_dropped, "inflight": _moves.size()}
 
 
 ## 消费一批可视化事件
 func apply_events(events: Array) -> void:
-	var touched := false
+	if events.is_empty():
+		return
+
+	# 先把这一批归类，再统一限流。直接边遍历边写状态的话，
+	# 高速运行时会把成百上千个下标一次性点成白色。
+	var move_batch: Array = []
+	var hot_batch: Array = []
+	var seen := {}
+
 	for e in events:
 		match String(e.get("t", "")):
 			"read":
 				var i := int(e["i"])
-				_hot[i] = 1.0
 				_selected = i
 				_selected_ttl = 0.40
-				touched = true
+				if not seen.has(i):
+					seen[i] = true
+					hot_batch.append(i)
 			"cmp":
 				for idx in (e["idx"] as Array):
-					_hot[int(idx)] = 1.0
-				touched = true
+					var j := int(idx)
+					if not seen.has(j):
+						seen[j] = true
+						hot_batch.append(j)
 			"write":
-				_hot[int(e["i"])] = 1.0
-				touched = true
+				var w := int(e["i"])
+				if not seen.has(w):
+					seen[w] = true
+					hot_batch.append(w)
 			"move":
-				_push_move(int(e["from"]), int(e["to"]), e["v"])
-				_hot[int(e["to"])] = 1.0
-				_pending_moves += 1
-				touched = true
-	if touched:
-		_recount_settled()
+				move_batch.append(e)
+				var to_i := int(e["to"])
+				if not seen.has(to_i):
+					seen[to_i] = true
+					hot_batch.append(to_i)
+
+	_moves_seen = move_batch.size()
+	_moves_dropped = 0
+	_ingest_moves(move_batch)
+	_ingest_hot(hot_batch)
+	_recount_settled()
+
+
+## 动画限流：控制入场数量，超出的均匀抽样丢掉。
+## 被丢掉的元素不会有动画，但柱子本身早就画在目标格上了，所以不会"回弹"。
+func _ingest_moves(batch: Array) -> void:
+	var n := batch.size()
+	if n == 0:
+		return
+	var room := MAX_INFLIGHT - _moves.size()
+	if room <= 0:
+		_moves_dropped = n
+		return
+	if n <= room:
+		for e in batch:
+			_push_move(int(e["from"]), int(e["to"]), e["v"])
+		return
+
+	# 均匀抽样，而不是取前 room 个——取开头会让动画明显偏向数组左半边
+	var step := float(n) / float(room)
+	var k := 0.0
+	for _t in room:
+		var e: Dictionary = batch[int(k)]
+		_push_move(int(e["from"]), int(e["to"]), e["v"])
+		k += step
+	_moves_dropped = n - room
+
+
+## 高亮限流：均匀抽样 + 按密度压低强度。
+## 密集活动表现成"柔和的辉光"，而不是"整块全白"。
+func _ingest_hot(batch: Array) -> void:
+	var n := batch.size()
+	if n == 0:
+		return
+	var take := mini(n, MAX_HOT)
+	var intensity := clampf(sqrt(float(take) / float(n)), 0.30, 1.0)
+	if take == n:
+		for i in batch:
+			_hot[int(i)] = intensity
+		return
+	var step := float(n) / float(take)
+	var k := 0.0
+	for _t in take:
+		_hot[int(batch[int(k)])] = intensity
+		k += step
 
 
 func _push_move(from_i: int, to_i: int, v: Variant) -> void:
@@ -138,9 +206,7 @@ func _push_move(from_i: int, to_i: int, v: Variant) -> void:
 		if int(m["from"]) == from_i and int(m["to"]) == to_i:
 			m["t"] = 0.0
 			return
-	if _moves.size() >= MAX_MOVES:
-		# 丢掉最旧的只是"不再为它画飞行动画"，元素本身早就已经在目标格上了
-		# （柱子是按真实数组画的），所以不会出现回弹。
+	if _moves.size() >= MAX_INFLIGHT:
 		_moves.pop_front()
 	_moves.append({"from": from_i, "to": to_i, "v": v, "t": 0.0})
 
@@ -148,21 +214,11 @@ func _push_move(from_i: int, to_i: int, v: Variant) -> void:
 func _process(delta: float) -> void:
 	var dirty := false
 
-	# 每 0.25 秒估一次事件速率，反推合适的动画时长
-	_sample_accum += delta
-	if _sample_accum >= 0.25:
-		var rate := float(_pending_moves) / _sample_accum
-		_move_rate = lerpf(_move_rate, rate, 0.6)
-		_pending_moves = 0
-		_sample_accum = 0.0
-		_duration = clampf(MOVE_BUDGET / maxf(_move_rate, 0.01),
-			MOVE_MIN_DURATION, MOVE_MAX_DURATION)
-
 	if not _moves.is_empty():
 		var keep: Array = []
 		for m in _moves:
 			var t := float(m["t"]) + delta
-			if t < _duration:
+			if t < MOVE_DURATION:
 				m["t"] = t
 				keep.append(m)
 		_moves = keep
@@ -181,10 +237,29 @@ func _process(delta: float) -> void:
 			if h > 0.07:
 				next[k] = h
 		_hot = next
+		_trim_hot()
 		dirty = true
 
 	if dirty:
 		queue_redraw()
+
+
+## 高亮集合的总量上限。
+##
+## 单帧限流只约束"这一帧新增多少"，但 _hot 是跨帧累积衰减的：
+## 每帧新增 26 个、活 5 帧，稳态就会有 130 个下标同时亮着——
+## 256 个元素里一半在发光，看着就是一片糊。这里再兜一道总量上限，
+## 只保留最亮的（也就是最新的），让辉光聚焦在算法当前活动的位置。
+func _trim_hot() -> void:
+	var limit := MAX_HOT * 3
+	if _hot.size() <= limit:
+		return
+	var keys := _hot.keys()
+	keys.sort_custom(func(a, b): return float(_hot[a]) > float(_hot[b]))
+	var keep := {}
+	for i in limit:
+		keep[keys[i]] = _hot[keys[i]]
+	_hot = keep
 
 
 func _recount_settled() -> void:
@@ -310,7 +385,7 @@ func _draw_flying(n: int, span: float, gap: int, base_y: float, usable: float) -
 		var to_i := int(m["to"])
 		if from_i < 0 or from_i >= n or to_i < 0 or to_i >= n:
 			continue
-		var p := clampf(float(m["t"]) / maxf(_duration, 0.001), 0.0, 1.0)
+		var p := clampf(float(m["t"]) / MOVE_DURATION, 0.0, 1.0)
 		var e := 1.0 - pow(1.0 - p, 3.0)  # ease-out：起步快、落位稳
 
 		var x := lerpf(_bar_x(from_i, n, span), _bar_x(to_i, n, span), e)
@@ -324,7 +399,7 @@ func _draw_flying(n: int, span: float, gap: int, base_y: float, usable: float) -
 
 func _draw_placeholder(w: float, h: float) -> void:
 	var font := get_theme_default_font()
-	draw_string(font, Vector2(0, h * 0.5), "等待任务载入",
+	draw_string(font, Vector2(0, h * 0.5), "按「运行」生成题目",
 		HORIZONTAL_ALIGNMENT_CENTER, w, 12, Prts.DIM)
 
 
