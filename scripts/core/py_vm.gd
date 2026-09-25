@@ -538,13 +538,19 @@ func _call_random_method(mname: String, args: Array, line: int) -> Variant:
 			if args.size() != 1 or not (args[0] is PyObjects.PyList):
 				_fail("shuffle() 需要 1 个参数（要洗的数组）", line)
 				return null
-			var items: Array = (args[0] as PyObjects.PyList).items
-			# Fisher–Yates：从后往前，每步跟它前面随机一个位置交换
-			for k in range(items.size() - 1, 0, -1):
+			var lst := args[0] as PyObjects.PyList
+			# Fisher–Yates：从后往前，每步跟它前面随机一个位置交换。
+			# 交换走**带埋点**的下标通道，和 a[i], a[j] = a[j], a[i] 完全同一口径：
+			# 两次读 + 两次写 + 两个 move 事件——左侧可视化才看得到洗牌过程，
+			# 效率预算里也才会把洗牌的开销算进去。
+			for k in range(lst.items.size() - 1, 0, -1):
 				var j := _rng.randi_range(0, k)
-				var t: Variant = items[k]
-				items[k] = items[j]
-				items[j] = t
+				_index_get(lst, k, line)
+				var vk: Variant = stack.pop_back()
+				_index_get(lst, j, line)
+				var vj: Variant = stack.pop_back()
+				_index_set(lst, k, vj, line)
+				_index_set(lst, j, vk, line)
 			return null
 		"randint":
 			if args.size() != 2 or not _is_int(args[0]) or not _is_int(args[1]):

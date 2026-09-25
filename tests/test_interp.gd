@@ -44,6 +44,8 @@ func _initialize() -> void:
 	# random 模块
 	_test_permutation("random.shuffle 只重排不换元素",
 		"def sort(a):\n    random.shuffle(a)\n    return a\n")
+	_test_shuffle_events("random.shuffle 有读有写有移动",
+		"def sort(a):\n    random.shuffle(a)\n    return a\n")
 	_test_log("random.seed 可复现",
 		"def sort(a):\n    random.seed(7)\n    x = random.randint(1, 1000000)\n    random.seed(7)\n    y = random.randint(1, 1000000)\n    random.seed(8)\n    z = random.randint(1, 1000000)\n    print(x == y, x != z)\n    return a\n",
 		"True True")
@@ -133,6 +135,38 @@ func _test_permutation(name: String, code: String) -> void:
 		return
 	_pass += 1
 	print("  [通过] %-22s 10 个元素洗成排列" % name)
+
+
+## 洗牌必须走带埋点的通道：有读、有写、有移动事件——可视化与效率预算才看得见它。
+func _test_shuffle_events(name: String, code: String) -> void:
+	var data := _make_array(10)
+	var parser := PyParser.new()
+	var parsed := parser.parse(code)
+	var comp := PyCompiler.new()
+	var compiled := comp.compile(parsed["ast"])
+	var arr := PyObjects.PyList.new(data)
+	var vm := PyVM.new()
+	vm.setup(compiled, arr, "sort", 100000, 4000000)
+	vm.start()
+	var ev := {}
+	while vm.run_batch(4000):
+		for e in vm.drain_events():
+			ev[e["t"]] = int(ev.get(e["t"], 0)) + 1
+	for e in vm.drain_events():
+		ev[e["t"]] = int(ev.get(e["t"], 0)) + 1
+	if vm.status == "error":
+		_fail += 1
+		print("  [失败] %s —— %s" % [name, vm.error["msg"]])
+		return
+	var reads := int(ev.get("read", 0))
+	var writes := int(ev.get("write", 0))
+	var moves := int(ev.get("move", 0))
+	if reads <= 0 or writes <= 0 or moves <= 0:
+		_fail += 1
+		print("  [失败] %s —— 洗牌没有产出读/写/移动：%s" % [name, str(ev)])
+		return
+	_pass += 1
+	print("  [通过] %-22s 读=%d 写=%d 移动=%d" % [name, reads, writes, moves])
 
 
 ## 断言 print 出来的内容（用 " " 连接）。比只断言"跑得通"更能抓住返回值错乱的问题。
