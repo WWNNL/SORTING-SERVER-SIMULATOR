@@ -83,6 +83,10 @@ func _build() -> void:
 	_edit.gutters_draw_line_numbers = true
 	_edit.gutters_zero_pad_line_numbers = false
 	_edit.highlight_current_line = true
+	# 光标停在一个变量名上（或选中一段文字）时，全文里同名的都跟着亮起来。
+	# 这是引擎自带的能力，不用自己扫文本；配色见 prts.gd 的 word_highlighted_color
+	# （默认那支是淡青色，和这套黑白灰不搭）。
+	_edit.highlight_all_occurrences = true
 	_edit.indent_automatic = true
 	# Python 不接受制表符混排，所以 Tab 一律展开成 4 个空格
 	_edit.indent_use_spaces = true

@@ -268,6 +268,10 @@ static func _theme_inputs(t: Theme) -> void:
 	t.set_color("font_color", "TextEdit", TEXT_HI)
 	t.set_color("caret_color", "TextEdit", WHITE)
 	t.set_color("selection_color", "TextEdit", Color("#3a3a3a"))
+	# "同名变量全部高亮"的底色（光标停在变量名上时全文里同名的都亮）。
+	# 要比选中色 #3a3a3a 更暗一档：真去框选一段时，选中范围才是最强的那一层。
+	# 默认主题那支是淡青色，在这套黑白灰里格外扎眼。
+	t.set_color("word_highlighted_color", "TextEdit", Color("#242424"))
 	t.set_color("current_line_color", "TextEdit", Color("#101010"))
 	t.set_color("line_number_color", "TextEdit", Color("#454545"))
 	t.set_color("font_size", "TextEdit", FS_SMALL)
