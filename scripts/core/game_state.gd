@@ -15,9 +15,15 @@ signal speed_changed()
 const SAVE_PATH := "user://save.json"
 const ENTRY := "sort"
 
-## CPU 滑条能调到的下限比例。再低就没有观察价值了
-## （额定 130000 步/秒时是 1300 步/秒）。
+## 存档里比例的下限（防旧数据/手滑存出负值）。滑条真正的下限是
+## min_cpu_ratio()：定成"恰好还能跑出 1 步/秒"——固定 1% 的话，
+## 升满 C-256 后最低档是 1300 步/秒，根本看不清运行轨迹。
 const MIN_CPU_RATIO := 0.01
+
+## CPU 滑条的最低比例 = 1 / 额定速度：任何档位的滑条底部都是 1 步/秒。
+## cpu_speed 有 1 的下限兜底，比这更低的比例没有意义。
+func min_cpu_ratio() -> float:
+	return 1.0 / maxf(float(cpu_rate()), 1.0)
 
 var coins := 0
 var tiers := {"cpu": 0, "ram": 0, "disk": 0, "psu": 0}
@@ -87,7 +93,7 @@ func cpu_percent() -> int:
 
 
 func set_cpu_ratio(r: float) -> void:
-	var clamped := clampf(r, MIN_CPU_RATIO, 1.0)
+	var clamped := clampf(r, min_cpu_ratio(), 1.0)
 	if is_equal_approx(clamped, cpu_ratio):
 		return
 	cpu_ratio = clamped
