@@ -15,10 +15,12 @@ extends Control
 ##   · get_rect_at_line_column() 只对**可见行**有效，返回空矩形；
 ##     所以换行以后要按需要滚动到目标行，再取矩形（见 _follow）。
 
-const PAD_X := 4.0      ## 白框比文字起点再往外留一点，免得贴着字符
+const PAD_L := 4.0      ## 左边留一点，但别伸进装订线的行号里
+const PAD_R := 10.0     ## 右边多留一点，免得边框贴着最后一个字（见 _line_width）
 const PAD_Y := 1.0
 const MIN_W := 30.0     ## 空行也得框得出一个看得见的方框
 const EDGE := 4.0       ## 离编辑器右边缘留一点，别把滚动条圈进去
+const TAB_SPACES := 4   ## 和编辑器的 indent_size 一致，只在量宽度时用
 
 var editor: TextEdit = null
 
@@ -96,20 +98,35 @@ func _line_rect() -> Rect2:
 		return Rect2()   # 这一行不在可视范围里
 
 	var text := editor.get_line(li)
-	var tail := editor.get_rect_at_line_column(li, text.length())
-	var x0 := float(head.position.x) - PAD_X
+	var x0 := float(head.position.x) - PAD_L
 	var limit := maxf(x0 + MIN_W, _content_right() - EDGE)
-	# 行尾量不到有两种情况，含义完全不同：
-	#   · 空行：tail 与 head 重合，交给下面的 clamp 撑到 MIN_W
-	#   · 行比可视区还宽：行尾那一列根本不在可见范围内，get_rect_at_line_column 返回空。
-	#     这时要一路框到文本区右边界，否则白框会缩成一个几十像素的小方块，
-	#     看着像"框错了行"。
-	var x1 := limit
-	if tail.size.y > 0:
-		x1 = float(tail.position.x) + PAD_X
-	x1 = clampf(x1, x0 + MIN_W, limit)
-	var y := float(head.position.y) - PAD_Y
-	return Rect2(x0, y, x1 - x0, float(head.size.y) + PAD_Y * 2.0)
+	# 行比可视区还宽时会被 limit 截住，白框一路顶到文本区右边界
+	var x1 := clampf(float(head.position.x) + _line_width(text) + PAD_R,
+		x0 + MIN_W, limit)
+	# 上下也夹在编辑器范围内：首行（y = -1）和贴着下边缘的那一行，
+	# 否则会被编辑器的裁剪吃掉一条边，看着像边框缺了一块。
+	var y0 := maxf(0.0, float(head.position.y) - PAD_Y)
+	var y1 := minf(size.y, float(head.position.y) + float(head.size.y) + PAD_Y)
+	return Rect2(x0, y0, x1 - x0, y1 - y0)
+
+
+## 这一行正文实际画出来有多宽（像素）。
+##
+## 不能拿 get_rect_at_line_column(行, 行末列) 当行尾：TextEdit 的每个光标位置都是
+## 整数像素，逐字累加下来会比真正画出来的文本短一截——实测 12 个字符短 4px、
+## 28 个字符（含中文）短 12px，正好差一个全角字。白框右边框于是压在最后一个字上，
+## 中文注释行最明显。改成用编辑器当前字体量字符串宽度：绘制走的就是这套字形排版，
+## 量出来即视觉上的行尾。
+func _line_width(text: String) -> float:
+	if editor == null:
+		return 0.0
+	var font: Font = editor.get_theme_font("font")
+	if font == null:
+		return 0.0
+	var font_size: int = editor.get_theme_font_size("font_size")
+	# 制表符按编辑器的缩进宽度展开，否则量出来比画出来的短
+	var measure := text.replace("\t", " ".repeat(TAB_SPACES))
+	return font.get_string_size(measure, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size).x
 
 
 ## 文本区域的右边界（编辑器局部坐标）。竖滚动条是浮在右边缘上的，
