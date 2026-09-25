@@ -147,7 +147,7 @@ func _make_speed_block() -> Dictionary:
 	var slider := HSlider.new()
 	slider.min_value = 0.0
 	slider.max_value = 1.0
-	slider.step = 0.001
+	slider.step = SPEED_STEP
 	slider.value = 1.0
 	slider.custom_minimum_size = Vector2(0, 14)
 	slider.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -157,6 +157,8 @@ func _make_speed_block() -> Dictionary:
 	slider.value_changed.connect(_on_speed_changed)
 	# 拖动过程中每帧写盘不值得，松手再存
 	slider.drag_ended.connect(_on_speed_drag_ended)
+	# 滚轮与 Shift+拖动这两个微调通道要自己接鼠标（引擎只认普通拖动）
+	slider.gui_input.connect(_on_speed_input)
 	box.add_child(slider)
 
 	var hint := Prts.dim_label("", Prts.FS_TINY)
@@ -167,6 +169,61 @@ func _make_speed_block() -> Dictionary:
 
 
 # ---------------------------------------------------------------- 速度滑条
+
+## 位置步长。位置空间一格 0.0002，在 100% 处折算约 0.09 个百分点，
+## 越往低端越细（对数映射的本来目的）——0.1% 的颗粒度在整条上都够用。
+const SPEED_STEP := 0.0002
+## Shift+拖动时指针每动 1px 折算的位置增量 = 常规的 1/8：
+## 常规拖动在右端 1px 约 0.7pp（像素分辨率摆在那），Shift 后约 0.09pp，
+## 正是"0.1% 微调"的颗粒度。除以像素分辨率本身，粗细不随滑条宽度变。
+const FINE_DIV := 8.0
+
+## 细拖状态：按住 Shift 按下时记下锚点，指针相对锚点动 1px = 常规 1/8 的位移
+var _fine_active := false
+var _fine_anchor_px := 0.0
+var _fine_anchor_val := 0.0
+
+## 微调通道（gui_input 信号先于控件自身的处理，要抢的话 accept_event）：
+##   · 滚轮：一格 = SPEED_STEP，悬停即用，不用点进去
+##   · Shift+按下：细拖模式，松手结束并补一次存盘
+##   · 普通按下/拖动一律不碰，引擎自己处理
+func _on_speed_input(event: InputEvent) -> void:
+	var card: Dictionary = _cards.get("cpu", {})
+	var slider: HSlider = card.get("speed_slider") as HSlider
+	if slider == null:
+		return
+	if event is InputEventMouseButton:
+		var mb := event as InputEventMouseButton
+		# 滚轮在 Godot 4 里也是 InputEventMouseButton，只是按键下标是轮子
+		if mb.button_index == MOUSE_BUTTON_WHEEL_UP or mb.button_index == MOUSE_BUTTON_WHEEL_DOWN:
+			var dir := 1.0 if mb.button_index == MOUSE_BUTTON_WHEEL_UP else -1.0
+			slider.value = clampf(slider.value + dir * SPEED_STEP, 0.0, 1.0)
+			slider.accept_event()
+			return
+		if mb.button_index != MOUSE_BUTTON_LEFT:
+			return
+		if mb.pressed:
+			if mb.shift_pressed:
+				_fine_anchor_px = mb.position.x
+				_fine_anchor_val = slider.value
+				_fine_active = true
+				slider.accept_event()
+			else:
+				_fine_active = false
+		elif _fine_active:
+			_fine_active = false
+			# 细拖不经过引擎的 drag_ended，这里补上"松手才存盘"
+			_on_speed_drag_ended(true)
+			slider.accept_event()
+		return
+	if event is InputEventMouseMotion and _fine_active:
+		var mm := event as InputEventMouseMotion
+		var per_px := 1.0 / maxf(slider.size.x, 1.0) / FINE_DIV
+		slider.value = clampf(
+			_fine_anchor_val + (mm.position.x - _fine_anchor_px) * per_px,
+			0.0, 1.0)
+		slider.accept_event()
+
 
 ## 滑条位置（0~1）↔ 速度比例。用对数映射：额定 130000 步/秒时，
 ## 线性滑条最左边的 1% 就要跨越 1300 步，低端根本没法微调。
@@ -202,9 +259,10 @@ func _refresh_speed() -> void:
 	value.text = "%s 步 / 秒" % Prts.comma(now)
 	Prts.set_color_cached(value, "speed", Prts.WHITE if now >= rated else Prts.TEXT_HI,
 		_color_cache)
+	# 一位小数才看得见 0.1% 的颗粒度；末尾教一下两个微调手势
 	(card["speed_hint"] as Label).text = \
-		"额定 %s 步 / 秒，当前 %d%%。调慢只是看得更清楚：同一份工作耗时变长，总电费反而更高。" % [
-			Prts.comma(rated), Game.cpu_percent()]
+		"额定 %s 步 / 秒，当前 %.1f%%。调慢只是看得更清楚：同一份工作耗时变长，总电费反而更高。按住 Shift 拖动或滚轮可 0.1%% 微调。" % [
+			Prts.comma(rated), Game.cpu_ratio * 100.0]
 
 
 func refresh() -> void:
