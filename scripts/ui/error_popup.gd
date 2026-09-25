@@ -30,24 +30,13 @@ const PAD_H := 24.0                     ## 面板内左右留白（_layout 量�
 ## 故障灯的闪法：一串 [时刻占比, 亮度] 关键帧，按"保持到下一帧"取值。
 ## 硬切才像坏掉的灯管；在关键帧之间做插值就变成渐入渐出，那是"加载中"的语汇。
 ##
-## 进出场都是**三下**，而且每两下之间的等待越来越短——灯管挣扎的节奏是越挣越急，
-## 匀速闪反而像节拍器。下面注释里的间隔都按进/退场总时长换算过。
+## **退场表是唯一的模板**（FLICKER_OUT），进场表由它按时间镜像生成（见 _ready）。
+## 两边因此永远对称：改退场，进场自动跟着变，不会只改一边。
 ##
-## 进场：黑 → 亮 → 黑 → 亮 → 黑 → 亮（之后一直亮着）。
-## 三下的间隔 0.42 → 0.18 → 0.13（约 193 / 83 / 60 ms）。
-const FLICKER_IN := [
-	[0.00, 0.00],
-	[0.42, 1.00],   ## 第一下
-	[0.50, 0.00],
-	[0.68, 1.00],   ## 第二下
-	[0.75, 0.00],
-	[0.88, 1.00],   ## 第三下，之后稳住不灭
-	[1.00, 1.00],
-]
 ## 退场：亮着 → 黑 → 亮 → 黑 → 亮 → 黑 → 亮 → 灭透。
-## 起手那下不算"闪"，之后三下回光。这里的关键是**黑的间隔本身也要递减**，
-## 只让"回光之间的周期"变短是不够的——感知到的节奏主要是黑的长度：
-## 三段黑 80 / 60 / 45 ms（0.200 / 0.150 / 0.1125），最后 35 ms 收尾，总共 0.40s。
+## 起手那下不算"闪"，之后三下回光；关键是**黑的间隔本身递减**，
+## 只让"回光之间的周期"变短是不够的——感知到的节奏主要是黑的那段有多长：
+## 四段黑 80 / 60 / 45 / 35 ms（0.2000 / 0.1500 / 0.1125 / 0.0875），总共 0.40s。
 const FLICKER_OUT := [
 	[0.0000, 1.00],
 	[0.2250, 0.00],
@@ -59,8 +48,8 @@ const FLICKER_OUT := [
 	[0.9125, 0.00],
 	[1.0000, 0.00],
 ]
-const IN_TIME := 0.46     ## 进场总时长
-const OUT_TIME := 0.40    ## 退场总时长
+## 进出场总时长。镜像关系要求两边一样长。
+const FLICKER_TIME := 0.40
 
 enum { ST_HIDDEN, ST_IN, ST_SHOWN, ST_OUT }
 
@@ -72,6 +61,8 @@ var _state := ST_HIDDEN
 var _t := 0.0
 ## 居中位置（不含动画偏移）
 var _base_pos := Vector2.ZERO
+## 进场关键帧：由退场表按时间镜像生成（见 _ready），这里存下来给 _process 用
+var _flicker_in: Array = []
 
 
 func _init() -> void:
@@ -88,6 +79,7 @@ func _ready() -> void:
 	set_anchors_preset(Control.PRESET_FULL_RECT)
 	resized.connect(_layout)
 	_build()
+	_flicker_in = mirror_in_time(FLICKER_OUT)
 	set_process(false)
 	# 先躲在隐藏状态里把版排一次。
 	# Label 的自动折行高度是按它**当前**宽度量出来的：第一次显示时才排的话，
@@ -95,6 +87,32 @@ func _ready() -> void:
 	# 弹窗就变成一个又窄又高的长条（实测 560×518 而不是 560×140）。
 	# 先排过一遍，之后每次换文案就都能量准了。
 	call_deferred("_prime_layout")
+
+
+## 把一张关键帧表按**时间**倒过来：新段起点 = 1 - 原段终点，亮度原样不动。
+## 于是"亮着→闪三下→灭透"镜像成"黑着→闪三下→亮住"：亮的收尾接上亮的起手，
+## 两边在时间轴上互为倒放。
+##
+## 注意必须按**段**翻，不能只翻关键帧的时刻：关键帧的值是作用于"它到下一个关键帧之间"的，
+## 只翻时刻会让每段的归属错位一格——实测开场会平白多出 30ms 的黑。
+##
+## 进场那串的节奏因此是退场的倒放：黑 35 → 45 → 60 → 80 ms（越来越慢，像灯管越闪越稳），
+## 退场则是黑 80 → 60 → 45 → 35 ms（越闪越急，最后灭透）。这是刻意的对称。
+static func mirror_in_time(pattern: Array) -> Array:
+	var out: Array = []
+	for i in pattern.size():
+		var t0 := float(pattern[i][0])
+		var t1 := 1.0 if i + 1 >= pattern.size() else float(pattern[i + 1][0])
+		if t1 <= t0:
+			continue
+		out.append([1.0 - t1, float(pattern[i][1])])
+	if out.is_empty():
+		return out
+	out.reverse()
+	# 末尾补一个保持点，让表格自解释（flicker_at 本来也会保持最后一个值）
+	var last: Array = out[-1]
+	out.append([1.0, float(last[1])])
+	return out
 
 
 func _prime_layout() -> void:
@@ -214,15 +232,15 @@ func _process(delta: float) -> void:
 	match _state:
 		ST_IN:
 			_t += delta
-			var p := clampf(_t / IN_TIME, 0.0, 1.0)
-			modulate.a = flicker_at(FLICKER_IN, p)
+			var p := clampf(_t / FLICKER_TIME, 0.0, 1.0)
+			modulate.a = flicker_at(_flicker_in, p)
 			if p >= 1.0:
 				_state = ST_SHOWN
 				modulate.a = 1.0
 				set_process(false)
 		ST_OUT:
 			_t += delta
-			var p := clampf(_t / OUT_TIME, 0.0, 1.0)
+			var p := clampf(_t / FLICKER_TIME, 0.0, 1.0)
 			modulate.a = flicker_at(FLICKER_OUT, p)
 			if p >= 1.0:
 				_state = ST_HIDDEN
