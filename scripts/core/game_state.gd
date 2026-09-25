@@ -186,6 +186,30 @@ func spend(amount: int) -> bool:
 
 # ---------------------------------------------------------------- 算法文件
 
+## 算法文件统一带这个后缀。文件列表是按"文件"列出来的，不带后缀看着不像个文件
+## （玩家新建时输入"1145"就会得到一个叫"1145"的东西）。
+const EXT := ".py"
+
+
+## 补上 .py 后缀。已经有了就不重复加（大小写不敏感，玩家写 .PY 也认）。
+static func with_ext(name: String) -> String:
+	var clean := name.strip_edges()
+	if clean.is_empty():
+		return clean
+	if clean.to_lower().ends_with(EXT):
+		return clean
+	return clean + EXT
+
+
+## 在扩展名**前面**插一段后缀："冒泡排序.py" + " 副本" → "冒泡排序 副本.py"。
+## 直接拼在后面会得到"冒泡排序.py 副本"，看着又不像 Python 文件了，
+## 而且列表里排在一起时会和真正的 .py 分家。
+static func insert_before_ext(name: String, suffix: String) -> String:
+	if name.to_lower().ends_with(EXT):
+		return name.substr(0, name.length() - EXT.length()) + suffix + EXT
+	return name + suffix
+
+
 func current_code() -> String:
 	if files.is_empty():
 		return ""
@@ -214,10 +238,13 @@ func _blank_file(name: String, code: String, cost: int) -> Dictionary:
 	}
 
 
+## 新建算法文件。名字在这里统一补 .py 并去重，所有入口（新建按钮、将来的别的调用）
+## 都走这一条，不用各自记得补。
 func new_file(name: String, code := "") -> int:
-	if name.strip_edges().is_empty():
-		name = _unique_name("新算法")
-	files.append(_blank_file(name, code, 0))
+	var clean := with_ext(name)
+	if clean.is_empty():
+		clean = with_ext("新算法")
+	files.append(_blank_file(_unique_name(clean), code, 0))
 	current_file = files.size() - 1
 	files_changed.emit()
 	save_game()
@@ -228,7 +255,8 @@ func duplicate_file(index: int) -> int:
 	if index < 0 or index >= files.size():
 		return -1
 	var src: Dictionary = files[index]
-	files.append(_blank_file(_unique_name(String(src["name"]) + " 副本"),
+	files.append(_blank_file(
+		_unique_name(insert_before_ext(String(src["name"]), " 副本")),
 		String(src["code"]), 0))
 	current_file = files.size() - 1
 	files_changed.emit()
@@ -248,15 +276,26 @@ func delete_file(index: int) -> bool:
 	return true
 
 
+## 重命名。同样补 .py——老存档里可能有"1145"这种没后缀的名字，
+## 玩家把它改回来是最自然的修法，这条路上也得补，否则会觉得"改了还是没后缀"。
+## 重名不拦（玩家可能就想这么叫），由调用方给出提示。
 func rename_file(index: int, name: String) -> void:
 	if index < 0 or index >= files.size():
 		return
-	var clean := name.strip_edges()
+	var clean := with_ext(name)
 	if clean.is_empty():
 		return
 	files[index]["name"] = clean
 	files_changed.emit()
 	save_game()
+
+
+## 这个名字是不是已经被**别的**文件占了（重命名时用来提醒）
+func name_taken_by_other(name: String, index: int) -> bool:
+	for i in files.size():
+		if i != index and String(files[i]["name"]) == name:
+			return true
+	return false
 
 
 func record_result(index: int, n: int, ops: int, gain: int) -> void:
@@ -276,11 +315,13 @@ func record_result(index: int, n: int, ops: int, gain: int) -> void:
 	files_changed.emit()
 
 
+## 重名时加序号。序号插在扩展名前面："新算法.py" → "新算法 2.py"，
+## 不然后缀就成了"新算法.py 2"。
 func _unique_name(base: String) -> String:
 	var name := base
 	var k := 2
 	while _name_taken(name):
-		name = "%s %d" % [base, k]
+		name = insert_before_ext(base, " %d" % k)
 		k += 1
 	return name
 

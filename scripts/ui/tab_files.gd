@@ -81,7 +81,8 @@ func _build() -> void:
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 6)
 	_name_edit = LineEdit.new()
-	_name_edit.placeholder_text = "新文件名"
+	# 名字由模型统一补 .py，这里先说明，免得玩家自己再打一遍
+	_name_edit.placeholder_text = "新文件名（自动加 .py）"
 	_name_edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_name_edit.text_submitted.connect(_on_submit_name)
 	row.add_child(_name_edit)
@@ -230,23 +231,23 @@ func _on_submit_name(_text: String) -> void:
 func _on_new() -> void:
 	var name := _name_edit.text.strip_edges()
 	if name.is_empty():
-		name = "新算法.py"
+		name = "新算法"
 	Game.new_file(name, "# 在这里写你的排序算法\n# 服务器会调用 sort(a)，把 a 排成升序\ndef sort(a):\n    return a\n")
 	_name_edit.text = ""
 	# force：Game.new_file 已经把 current_file 设成新文件了，
 	# 不带 force 会被 switch_file 的"同一个文件"判断挡掉，编辑器不会重载。
 	main.switch_file(Game.files.size() - 1, true)
-	main.log_line("已新建 %s" % name, "sys")
+	# 日志要报**实际**落下来的名字：.py 是模型补的，重名还会加序号
+	main.log_line("已新建 %s" % main.current_file_name(), "sys")
 
 
 func _on_duplicate() -> void:
 	var idx := Game.current_file
 	if idx < 0 or idx >= Game.files.size():
 		return
-	var name := String((Game.files[idx] as Dictionary)["name"])
 	Game.duplicate_file(idx)
 	main.switch_file(Game.files.size() - 1, true)
-	main.log_line("已复制 %s" % name, "sys")
+	main.log_line("已复制为 %s" % main.current_file_name(), "sys")
 
 
 func _on_rename() -> void:
@@ -258,9 +259,13 @@ func _on_rename() -> void:
 	if idx < 0 or idx >= Game.files.size():
 		return
 	var old := String((Game.files[idx] as Dictionary)["name"])
+	var clash := Game.name_taken_by_other(Game.with_ext(name), idx)
 	Game.rename_file(idx, name)
 	_name_edit.text = ""
-	main.log_line("已把 %s 重命名为 %s" % [old, name], "sys")
+	# 报实际的名字：.py 是模型补的；重名只是提醒，不拦
+	main.log_line("已把 %s 重命名为 %s" % [old, main.current_file_name()], "sys")
+	if clash:
+		main.log_line("注意：已经有一个同名文件了，列表里会出现两个一样的名字。", "warn")
 
 
 func _on_delete() -> void:
