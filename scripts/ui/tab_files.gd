@@ -4,6 +4,9 @@ extends VBoxContainer
 ##
 ## 算法库里有一部分需要花狗狗币解锁。锁着的文件仍然显示在列表里，
 ## 但选中它不会切换运行目标——玩家能看见"有什么"，只是还用不了。
+##
+## 正在运行的文件那一行末尾会转一个方框小图标（RunSpinner）：运行不属于
+## "当前编辑的文件"，切去改别的算法时它继续跑，这个图标就是那件事的可见证据。
 
 var main: Control
 
@@ -14,6 +17,8 @@ var _stat_line: Label
 var _detail: Label
 var _btn_delete: Button
 var _btn_unlock: Button
+## 运行指示器。挂在 ItemList 内部，坐标就是行矩形那一套局部坐标。
+var _spinner: RunSpinner
 
 
 func _ready() -> void:
@@ -22,6 +27,39 @@ func _ready() -> void:
 	Game.files_changed.connect(_refresh_list)
 	Game.coins_changed.connect(func(_c): _refresh_info(Game.current_file))
 	_refresh_list()
+	set_process(true)
+
+
+func _process(_delta: float) -> void:
+	# 这一页不可见时什么都不做；行会随列表滚动，所以每帧对一次位置
+	if not is_visible_in_tree():
+		return
+	_sync_spinner()
+
+
+## 把转圈图标摆到"正在运行的那一行"的右端。没有运行、或那一行滚出视野就藏起来。
+func _sync_spinner() -> void:
+	if _spinner == null:
+		return
+	var idx: int = main.running_file_index()
+	if idx < 0 or not main.run_active():
+		_spinner.visible = false
+		return
+	var row: Rect2 = _list.get_item_rect(idx)
+	# 滚出可视区时 get_item_rect 仍会给坐标，自己判一下
+	if row.size.y <= 0.0 or row.position.y + row.size.y < 0.0 \
+			or row.position.y > _list.size.y:
+		_spinner.visible = false
+		return
+	# 暂停时定格（不转）并压暗：转与不转本身就是"在跑 / 停住了"的信号
+	_spinner.spinning = main.get_state() == main.ST_RUNNING
+	_spinner.dim = not _spinner.spinning
+	# 选中行是反白白底，点要换成深色才看得见
+	_spinner.light = _list.get_selected_items().has(idx)
+	_spinner.position = Vector2(
+		_list.size.x - _spinner.size.x - 10.0,
+		row.position.y + (row.size.y - _spinner.size.y) * 0.5)
+	_spinner.visible = true
 
 
 func _build() -> void:
@@ -34,6 +72,10 @@ func _build() -> void:
 	_list.item_selected.connect(_on_selected)
 	_list.item_activated.connect(_on_activated)
 	add_child(_list)
+
+	_spinner = RunSpinner.new()
+	_spinner.visible = false
+	_list.add_child(_spinner)
 
 	# 名称输入框 + 操作按钮。用内联输入而不是弹窗，操作更快也更符合极简调性。
 	var row := HBoxContainer.new()
@@ -226,8 +268,13 @@ func _on_delete() -> void:
 	if idx < 0 or idx >= Game.files.size():
 		return
 	var name := String((Game.files[idx] as Dictionary)["name"])
+	# 正在跑的那份代码已经在内存里，删掉文件不会打断它——但成绩也没地方记了
+	var was_running: bool = main.running_file_name() == name
 	if not Game.delete_file(idx):
 		main.log_line("至少要保留一个算法文件。", "warn")
 		return
 	main.reload_editor()
 	main.log_line("已删除 %s" % name, "sys")
+	if was_running:
+		main.log_line("删掉的正是正在运行的文件：这一局会继续跑完，但成绩不再记入任何文件。",
+			"warn")

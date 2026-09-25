@@ -38,6 +38,9 @@ var _sorted_target: Array = []
 var _console: Array = []
 ## 上一次真正执行到的行号。用来把 VM 偶尔报出的 0 挡掉（见 current_exec_line）
 var _last_exec_line := 0
+## 正在跑的这一次是从哪个文件编译出来的。按名字记：文件增删会让下标挪位，
+## 名字是唯一的（Game._unique_name 保证）。切换编辑的文件不影响它。
+var _run_file_name := ""
 
 ## 电费：本次任务累计产生多少、其中已从余额扣掉多少
 var _bill_accrued := 0.0
@@ -330,6 +333,12 @@ func _update_file_label() -> void:
 	if Game.files.is_empty():
 		_file_label.text = "—"
 		return
+	# 跑起来以后以"正在跑的是谁"为准：这时候玩家可能已经翻去编辑别的文件了，
+	# 标签再显示"当前算法"会让人以为运行也跟着换了。
+	if run_active() and not _run_file_name.is_empty():
+		_file_label.text = "运行中：%s" % _run_file_name
+		Prts.set_color_cached(_file_label, "file", Prts.WHITE, _color_cache)
+		return
 	var i := clampi(Game.current_file, 0, Game.files.size() - 1)
 	var f: Dictionary = Game.files[i]
 	var unlocked := Game.is_unlocked(i)
@@ -405,14 +414,19 @@ func state_name() -> String:
 ## 出错时停在出错那一行（比停在崩溃前的最后一条指令更有用），
 ## 跑完或待机就没有可框的行了。
 ##
+## 编辑器上显示的文件不是正在跑的那个时返回 0：VM 的行号属于它当初编译的那份代码，
+## 套到另一个文件上只会框错行。
+##
 ## 注意 VM 的取指位置**会短暂地报 0**：刚进入一个函数时新栈帧的 pc 还是 0
 ## （引导代码那几条指令的行号也是 0）。这种 0 不当成"没得框"，而是保持上一行——
 ## 否则每进一次函数白框就消失再出现，滑不动、还闪。
 func current_exec_line() -> int:
-	if _vm == null:
+	if _vm == null or _run_file_name.is_empty():
 		return 0
 	match _state:
 		ST_RUNNING, ST_PAUSED:
+			if not is_running_file_current():
+				return 0
 			var line := _vm.current_line()
 			if line > 0:
 				_last_exec_line = line
@@ -420,6 +434,38 @@ func current_exec_line() -> int:
 		ST_ERROR:
 			return int(_vm.error["line"])
 	return 0
+
+
+## 有没有正在跑的这一次（运行中或已暂停）。暂停也算：那一局还活着。
+func run_active() -> bool:
+	return _state == ST_RUNNING or _state == ST_PAUSED
+
+
+## 正在运行的文件名。空字符串表示当前没有运行。
+func running_file_name() -> String:
+	return _run_file_name
+
+
+## 编辑器上显示的是不是正在运行的那个文件。行号只有对得上文件才有意义。
+func is_running_file_current() -> bool:
+	return not _run_file_name.is_empty() and current_file_name() == _run_file_name
+
+
+func current_file_name() -> String:
+	if Game.files.is_empty():
+		return ""
+	var i := clampi(Game.current_file, 0, Game.files.size() - 1)
+	return String((Game.files[i] as Dictionary)["name"])
+
+
+## 正在运行的文件在列表里的下标。文件被删掉或改名就找不到，返回 -1。
+func running_file_index() -> int:
+	if _run_file_name.is_empty():
+		return -1
+	for i in Game.files.size():
+		if String(Game.files[i]["name"]) == _run_file_name:
+			return i
+	return -1
 
 
 func get_vm() -> PyVM:
@@ -456,8 +502,10 @@ func reload_editor() -> void:
 
 ## 切换算法文件。
 ##
-## 运行途中切换必须先把当前这次跑停掉，并重新生成排列——否则可视化上跑的还是
-## 旧算法的数据，看起来就像"换了代码却没生效"。
+## 运行途中切换**不打断**正在跑的那一次：跑的是当初编译好的那份代码、属于那个文件，
+## 切过去只是换个文件编辑/查看。题目、可视化、计时、电费都保持原样——
+## 否则玩家一翻别的文件，正在看的这一局就没了。
+## 正在运行的文件在文件列表里带一个转圈的小方框（见 RunSpinner）。
 ##
 ## force：新建/复制文件时必须传 true。那两个动作在 Game 里已经把 current_file
 ## 指到新文件了，这里再比一次 index == current_file 就会提前返回，编辑器于是
@@ -474,20 +522,17 @@ func switch_file(index: int, force := false) -> void:
 		return
 
 	var name := String((Game.files[index] as Dictionary)["name"])
-	var was_active := _state == ST_RUNNING or _state == ST_PAUSED
-	if _vm != null and was_active:
-		_vm.status = "halted"
-		_vm.halted_reason = "切换算法"
-		log_line("已结束当前运行，换用 %s。" % name, "sys")
-
 	Game.current_file = index
 	reload_editor()
-
-	# 换了算法，旧题目作废。新题目等玩家点「运行」时再生成。
-	_clear_task()
-	_state = ST_IDLE
-	_emit_state()
+	_update_file_label()
+	# 文件页的选中行跟着走（用户从列表点进来时本来就对，这里是给
+	# 新建/复制/解锁这些"从别处切过来"的路径兜底）
+	if _tab_files != null:
+		_tab_files.refresh()
 	Game.save_game()
+
+	if run_active():
+		log_line("已切换到 %s。正在运行的仍是 %s，不受影响。" % [name, _run_file_name], "sys")
 
 
 func _on_tab_changed(idx: int) -> void:
@@ -596,10 +641,12 @@ func _clear_task() -> void:
 	_elapsed = 0.0
 	_step_accum = 0.0
 	_last_exec_line = 0
+	_run_file_name = ""
 	if _viz != null:
 		_viz.clear()
 	_update_stat_labels(get_run_info())
 	_refresh_hardware_chips_only()
+	_update_file_label()
 
 
 ## 装配一次运行。任何一项资源不满足都在这里拦下来，并给出可执行的建议。
@@ -676,6 +723,9 @@ func _prepare_run() -> bool:
 	_vm = PyVM.new()
 	_vm.setup(compiled, arr, entry, Game.ram_bytes(), 100000 + _run_n * _run_n * 200)
 	_vm.start()
+	# 这一次运行属于此刻编辑器里的文件；之后随便切文件都不会影响它
+	_run_file_name = current_file_name()
+	_last_exec_line = 0
 
 	_viz.set_array(arr.items, _sorted_target)
 	_viz.set_caption("阶段 %02d · 任务 #%d" % [_run_stage + 1, _run_id])
@@ -685,12 +735,14 @@ func _prepare_run() -> bool:
 	_bill_paid = 0.0
 	_pay_accum = 0.0
 
-	log_line("任务 #%d 已装载：阶段 %02d「%s」· %d 个元素 · 效率预算 %d 次数组读写 · CPU %d 步/秒。"
-		% [_run_id, _run_stage + 1, String(Game.stage_info().get("algo", "")),
+	log_line("任务 #%d 已装载（%s）：阶段 %02d「%s」· %d 个元素 · 效率预算 %d 次数组读写 · CPU %d 步/秒。"
+		% [_run_id, _run_file_name, _run_stage + 1,
+			String(Game.stage_info().get("algo", "")),
 			_run_n, Game.stage_ops_budget(), Game.cpu_speed()], "sys")
 
 	_refresh_hardware_chips_only()
 	_update_stat_labels(get_run_info())
+	_update_file_label()
 	_refresh_stage()
 	return true
 
@@ -718,6 +770,8 @@ func _emit_state() -> void:
 		_viz_frame.queue_redraw()
 	if _tab_editor != null:
 		_tab_editor.set_running(running)
+	# 「当前算法 / 运行中」两种标签跟着状态切换
+	_update_file_label()
 
 
 func _refresh_buttons() -> void:
@@ -862,12 +916,14 @@ func _resolve_success() -> void:
 
 	Game.grant(base + bonus)
 	Game.stats["completed"] = int(Game.stats["completed"]) + 1
-	Game.record_result(Game.current_file, _run_n, ops, base + bonus)
+	# 成绩记在**正在运行的那个文件**名下，不是现在编辑器里显示的那个——
+	# 玩家完全可以在跑的时候翻去改别的算法。
+	Game.record_result(running_file_index(), _run_n, ops, base + bonus)
 	Game.record_stage(_run_stage, ops, _run_n)
 	_state = ST_DONE
 
-	log_line("排序完成 · %d 个元素 / %d 步 / %d 次比较 / %d 次数组读写 → 奖励 Ð%s"
-		% [_run_n, _vm.steps, _vm.comparisons, ops, Prts.comma(base)], "ok")
+	log_line("排序完成 · %s · %d 个元素 / %d 步 / %d 次比较 / %d 次数组读写 → 奖励 Ð%s"
+		% [_run_file_name, _run_n, _vm.steps, _vm.comparisons, ops, Prts.comma(base)], "ok")
 	log_line("本次电费 Ð%.1f（整机 %dW × %.1f 秒）。" % [_bill_accrued, Game.total_draw(), _elapsed], "sys")
 
 	if not passed:
