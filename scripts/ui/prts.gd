@@ -192,6 +192,12 @@ static func _theme_code_edit(t: Theme) -> void:
 
 
 static func _theme_panels(t: Theme) -> void:
+	# TooltipPanel 是 popup 提示自己的类型（和 PopupPanel 是两套）。不写它的话，
+	# 提示框会去用默认主题那份——圆角、浅色，鼠标停在文件行上时一眼就看得出来。
+	# 之前只有 PopupPanel 被覆盖，靠"找不到 TooltipPanel 就退回类名 PopupPanel"兜着，
+	# 但那是巧合，不如写清楚。
+	t.set_stylebox("panel", "TooltipPanel", flat(RAISED, LINE_HI, 1))
+	t.set_color("font_color", "TooltipLabel", TEXT_HI)
 	t.set_stylebox("panel", "PanelContainer", flat(PANEL, LINE, 1))
 	t.set_stylebox("panel", "Panel", flat(PANEL, LINE, 1))
 	t.set_stylebox("panel", "PopupPanel", flat(RAISED, LINE_HI, 1))
@@ -209,6 +215,8 @@ static func _theme_buttons(t: Theme) -> void:
 		t.set_color("font_color", ty, TEXT)
 		t.set_color("font_hover_color", ty, WHITE)
 		t.set_color("font_pressed_color", ty, BLACK)
+		# 悬停+按下也是反白状态，文字得跟着变黑，否则白底上还是白字
+		t.set_color("font_hover_pressed_color", ty, BLACK)
 		t.set_color("font_disabled_color", ty, Color("#3a3a3a"))
 		t.set_color("font_focus_color", ty, WHITE)
 		t.set_font_size("font_size", ty, FS_SMALL)
@@ -227,6 +235,9 @@ static func _theme_tabs(t: Theme) -> void:
 	t.set_stylebox("tabbar_background", "TabContainer", flat(BG, Color(0, 0, 0, 0), 0))
 	t.set_stylebox("tab_unselected", "TabContainer", flat(BG, LINE, 1, 14, 7))
 	t.set_stylebox("tab_hovered", "TabContainer", flat(HOVER, LINE_HI, 1, 14, 7))
+	t.set_stylebox("tab_disabled", "TabContainer", flat(PANEL, LINE, 1, 14, 7))
+	# 键盘焦点框一律不要：这套界面不用焦点环表示位置（按钮那边也是 empty）
+	t.set_stylebox("tab_focus", "TabContainer", empty(14, 7))
 	# 选中页顶部一条 2px 白线，是 PRTS 最典型的"当前项"标记
 	t.set_stylebox("tab_selected", "TabContainer",
 		flat_lr(PANEL, LINE, 0, 0, 14, 7))
@@ -271,9 +282,20 @@ static func _theme_lists(t: Theme) -> void:
 	t.set_stylebox("selected", "ItemList", flat(WHITE, WHITE, 0))
 	t.set_stylebox("selected_focus", "ItemList", flat(WHITE, WHITE, 0))
 	t.set_stylebox("hovered", "ItemList", flat(HOVER, Color(0, 0, 0, 0), 0))
+	# "选中项被鼠标指着"是**另外两个**样式盒，名字叫 hovered_selected /
+	# hovered_selected_focus。不写它们的话会落到默认主题那份——半透明白、圆角，
+	# 于是光标停在选中的文件行上时，那一行会变成一块带圆角的灰白方块。
+	# 这里跟 selected 保持一致：选中的行本来就靠反白表示当前项，
+	# 悬停没必要再叠一层（阶段页的 _on_row_hover 也是这么处理的）。
+	t.set_stylebox("hovered_selected", "ItemList", flat(WHITE, WHITE, 0))
+	t.set_stylebox("hovered_selected_focus", "ItemList", flat(WHITE, WHITE, 0))
 	t.set_color("font_color", "ItemList", TEXT)
 	t.set_color("font_selected_color", "ItemList", BLACK)
 	t.set_color("font_hovered_color", "ItemList", WHITE)
+	# 同上：反白行上的文字必须跟着变黑，默认那份是浅色
+	t.set_color("font_hovered_selected_color", "ItemList", BLACK)
+	t.set_color("guide_color", "ItemList", LINE)
+	t.set_color("scroll_hint_color", "ItemList", LINE_HI)
 	t.set_font_size("font_size", "ItemList", FS_SMALL)
 
 	t.set_stylebox("panel", "PopupMenu", flat(RAISED, LINE_HI, 1))
@@ -291,10 +313,12 @@ static func _theme_misc(t: Theme) -> void:
 	t.set_font_size("font_size", "ProgressBar", FS_TINY)
 
 	t.set_stylebox("scroll", "VScrollBar", flat(BG, Color(0, 0, 0, 0), 0))
+	t.set_stylebox("scroll_focus", "VScrollBar", flat(BG, Color(0, 0, 0, 0), 0))
 	t.set_stylebox("grabber", "VScrollBar", flat(LINE, Color(0, 0, 0, 0), 0))
 	t.set_stylebox("grabber_highlight", "VScrollBar", flat(LINE_HI, Color(0, 0, 0, 0), 0))
 	t.set_stylebox("grabber_pressed", "VScrollBar", flat(TEXT, Color(0, 0, 0, 0), 0))
 	t.set_stylebox("scroll", "HScrollBar", flat(BG, Color(0, 0, 0, 0), 0))
+	t.set_stylebox("scroll_focus", "HScrollBar", flat(BG, Color(0, 0, 0, 0), 0))
 	t.set_stylebox("grabber", "HScrollBar", flat(LINE, Color(0, 0, 0, 0), 0))
 	t.set_stylebox("grabber_highlight", "HScrollBar", flat(LINE_HI, Color(0, 0, 0, 0), 0))
 	t.set_stylebox("grabber_pressed", "HScrollBar", flat(TEXT, Color(0, 0, 0, 0), 0))
