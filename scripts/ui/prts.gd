@@ -384,6 +384,14 @@ static func vline() -> ColorRect:
 	return r
 
 
+## 指定颜色的 1px 横线。hline() 固定用主题的 LINE，报错弹窗那种红分隔线用这个。
+static func rule(color: Color) -> ColorRect:
+	var r := ColorRect.new()
+	r.color = color
+	r.custom_minimum_size = Vector2(0, 1)
+	return r
+
+
 static func button(text: String, min_width := 0) -> Button:
 	var b := Button.new()
 	b.text = text

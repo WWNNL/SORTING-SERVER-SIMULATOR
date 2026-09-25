@@ -72,6 +72,7 @@ var _tab_stages: TabStages
 var _tab_status: TabStatus
 var _tab_upgrade: TabUpgrade
 var _tab_editor: TabEditor
+var _error_popup: ErrorPopup
 
 
 func _ready() -> void:
@@ -146,6 +147,10 @@ func _build() -> void:
 	right.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	right.size_flags_stretch_ratio = 1.0
 	body.add_child(right)
+
+	# 报错弹窗放在最后一个：它就是"最上层"，压住补全框和所有标签页
+	_error_popup = ErrorPopup.new()
+	add_child(_error_popup)
 
 
 func _build_topbar() -> Control:
@@ -394,6 +399,36 @@ func log_line(text: String, kind := "sys") -> void:
 	if _console.size() > MAX_CONSOLE:
 		_console.pop_front()
 	console_line.emit(text, kind)
+	# 报错除了进控制台，还要在屏幕正中弹一次——控制台在"运行状况"页里，
+	# 玩家很可能正在看别的地方，光写日志等于没提示。
+	if kind == "error":
+		_popup_error(text)
+
+
+## 把一条错误拆成标题 + 正文。
+##
+## 控制台里的错误文案是这几种形状："运行故障 · 第 5 行：…"、"语法错误 → 第 2 行 …"、
+## "无法开机：整机需要 80W…"。取第一个分隔符前的一小段当标题，剩下的当正文；
+## 没有分隔符（或前缀过长）就整句当正文，标题给个通用的。
+## 这样不用在几十个报错点上都加标题参数，也不会漏掉将来新增的报错。
+static func error_title_and_body(text: String) -> Array:
+	for sep in [" · ", " → ", "："]:
+		var i := text.find(sep)
+		if i > 0 and i <= 12:
+			return [text.substr(0, i), text.substr(i + sep.length())]
+	return ["错误", text]
+
+
+func _popup_error(text: String) -> void:
+	if _error_popup == null:
+		return
+	var parts := error_title_and_body(text)
+	_error_popup.show_error(String(parts[0]), String(parts[1]))
+
+
+## 报错弹窗当前是否开着（测试与外部查询用）。
+func error_popup() -> ErrorPopup:
+	return _error_popup
 
 
 func get_console() -> Array:
