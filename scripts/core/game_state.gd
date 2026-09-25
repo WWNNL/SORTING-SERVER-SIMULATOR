@@ -31,6 +31,9 @@ var stage_sel := -1
 ## CPU 运行速度比例，1.0 = 跑满额定速度。滑条只允许往下调：
 ## 上限由硬件决定，否则"升级处理器"就失去意义了。
 var cpu_ratio := 1.0
+## 右侧标签页的顺序（存的是页名）。玩家拖动标签就能调整，顺序记进存档，
+## 下次开游戏还是自己排的样子；表里出现不认识的页名时由界面那边兜底。
+var tab_order: Array = []
 ## 每个阶段的历史最好成绩：阶段下标 -> 最少的数组读写次数
 var stage_best := {}
 ## 上面那条成绩是在多大的数据规模下取得的。
@@ -459,6 +462,7 @@ func save_game() -> void:
 		"cleared": cleared,
 		"stage_sel": stage_sel,
 		"cpu_ratio": cpu_ratio,
+		"tab_order": tab_order,
 		"stage_best": stage_best,
 		"stage_best_n": stage_best_n,
 		"files": files,
@@ -494,6 +498,10 @@ func load_game() -> void:
 	# 老存档没有这两个字段：默认"跟着进度走 + 跑满速度"
 	stage_sel = clampi(int(d.get("stage_sel", -1)), -1, frontier_index())
 	cpu_ratio = clampf(float(d.get("cpu_ratio", 1.0)), MIN_CPU_RATIO, 1.0)
+	tab_order = []
+	if d.get("tab_order") is Array:
+		for n in (d["tab_order"] as Array):
+			tab_order.append(String(n))
 
 	if d.get("stage_best") is Dictionary:
 		stage_best = {}
@@ -538,6 +546,7 @@ func reset_all() -> void:
 	cleared = 0
 	stage_sel = -1
 	cpu_ratio = 1.0
+	tab_order = []
 	stage_best = {}
 	stage_best_n = {}
 	current_file = 0

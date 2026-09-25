@@ -73,6 +73,8 @@ var _tab_status: TabStatus
 var _tab_upgrade: TabUpgrade
 var _tab_editor: TabEditor
 var _error_popup: ErrorPopup
+## 正在被拖动的标签页（null = 没在拖）。拖动期间只搬页面，松手才写盘。
+var _tab_drag_child: Node = null
 
 
 func _ready() -> void:
@@ -383,7 +385,94 @@ func _build_right() -> Control:
 	_tab_editor.name = "Python 编辑器"
 	_tabs.add_child(_tab_editor)
 
+	# 标签页可以拖着换位置（自己接鼠标，不用 TabBar 自带的 drag_to_rearrange，
+	# 原因见 _on_tab_bar_input 的说明）
+	_tabs.get_tab_bar().gui_input.connect(_on_tab_bar_input)
+	_apply_tab_order(Game.tab_order)
+	# 顺序表为空时 _apply_tab_order 会直接返回，提示得单独给一次
+	_hint_tabs_draggable()
+
 	return _tabs
+
+
+# ---------------------------------------------------------------- 标签页顺序
+
+## 拖动标签换位置。
+##
+## **不用** TabBar 自带的 `drag_to_rearrange`：它只动标签、不动页面，两边从此各说各话——
+## 实测拖完是"标签写着 A、点开却是 B 的页面"；而 TabContainer 又只按**子节点**刷新标签，
+## 所以想"照着标签顺序重排页面"会每帧自己转一圈（实测标题在五个页之间循环）。
+##
+## 自己接鼠标反而简单：按下记住拖的是哪一页，鼠标经过别的标签时就把**页面**搬过去，
+## 标签栏随后跟着子节点刷新——顺序只有一个来源，永远对得上，也不需要逐帧核对。
+## 拖动过程中不写盘，松手才存。
+func _on_tab_bar_input(event: InputEvent) -> void:
+	var bar := _tabs.get_tab_bar()
+	if event is InputEventMouseButton:
+		var mb := event as InputEventMouseButton
+		if mb.button_index != MOUSE_BUTTON_LEFT:
+			return
+		if mb.pressed:
+			var i := bar.get_tab_idx_at_point(mb.position)
+			_tab_drag_child = _tabs.get_child(i) if i >= 0 else null
+		elif _tab_drag_child != null:
+			_tab_drag_child = null
+			Game.tab_order = _tab_child_order()
+			Game.save_game()
+		return
+
+	if event is InputEventMouseMotion and _tab_drag_child != null:
+		var to := bar.get_tab_idx_at_point((event as InputEventMouseMotion).position)
+		if to >= 0 and to != _tab_drag_child.get_index():
+			_move_tab_page(_tab_drag_child, to)
+
+
+## 把某一页搬到指定位置。正在看的那一页跟着走，不会被搬走。
+func _move_tab_page(child: Node, to: int) -> void:
+	var keep := _tabs.get_child(clampi(_tabs.current_tab, 0, _tabs.get_child_count() - 1))
+	_tabs.move_child(child, clampi(to, 0, _tabs.get_child_count() - 1))
+	if keep != null:
+		_tabs.current_tab = keep.get_index()
+
+
+## 页面顺序（页名）。页面是唯一的顺序来源，标签栏只是它的投影。
+func _tab_child_order() -> Array:
+	var out: Array = []
+	for c in _tabs.get_children():
+		out.append(String(c.name))
+	return out
+
+
+## 按名字把页面重排成给定顺序。认不出的名字跳过，没提到的页一律留在最后——
+## 老存档、以后增删标签页都靠这个兜底，不会因为顺序表过时就漏掉某一页。
+func _apply_tab_order(order: Array) -> void:
+	if _tabs == null or order.is_empty():
+		return
+	var by_name := {}
+	for c in _tabs.get_children():
+		by_name[String(c.name)] = c
+	var placed := {}
+	var i := 0
+	for n in order:
+		var key := String(n)
+		if by_name.has(key) and not placed.has(key):
+			placed[key] = true
+			_tabs.move_child(by_name[key], i)
+			i += 1
+	for c in _tabs.get_children():
+		var key := String(c.name)
+		if not placed.has(key):
+			placed[key] = true
+			_tabs.move_child(c, i)
+			i += 1
+	_hint_tabs_draggable()
+
+
+## 标签栏没有别的视觉线索，只能靠悬停提示告诉玩家"这里能拖"
+func _hint_tabs_draggable() -> void:
+	var bar := _tabs.get_tab_bar()
+	for i in bar.tab_count:
+		bar.set_tab_tooltip(i, "拖动可以调整标签页顺序")
 
 
 # ================================================================ 对外接口
