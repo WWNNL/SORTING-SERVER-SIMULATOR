@@ -21,6 +21,9 @@ const RAM_HEADROOM_VARS := 8
 const MAX_STEP_DELTA := 0.05
 ## 单帧指令数硬上限（按 MAX_STEP_DELTA 和最高 CPU 档算，留一倍余量）
 const MAX_STEPS_PER_FRAME := 13000
+## 标签页：按住后移动超过这么多像素才算拖动，否则算点击。
+## 单点一下也会走"按下"这条路，没有这个门槛就会看到卡片闪一下。
+const TAB_DRAG_THRESHOLD := 6.0
 
 const STATE_NAMES := {
 	ST_IDLE: "待机", ST_RUNNING: "运行中", ST_PAUSED: "已暂停",
@@ -75,6 +78,9 @@ var _tab_editor: TabEditor
 var _error_popup: ErrorPopup
 ## 正在被拖动的标签页（null = 没在拖）。拖动期间只搬页面，松手才写盘。
 var _tab_drag_child: Node = null
+## 按下时记下的位置与标签下标，用来判断这一下到底是"点击"还是"拖动"
+var _tab_press_pos := Vector2.ZERO
+var _tab_press_index := -1
 ## 拖动时跟着光标走的那张小卡片（见 TabDragGhost）
 var _tab_ghost: TabDragGhost
 
@@ -409,9 +415,12 @@ func _build_right() -> Control:
 ## 实测拖完是"标签写着 A、点开却是 B 的页面"；而 TabContainer 又只按**子节点**刷新标签，
 ## 所以想"照着标签顺序重排页面"会每帧自己转一圈（实测标题在五个页之间循环）。
 ##
-## 自己接鼠标反而简单：按下记住拖的是哪一页，鼠标经过别的标签时就把**页面**搬过去，
-## 标签栏随后跟着子节点刷新——顺序只有一个来源，永远对得上，也不需要逐帧核对。
-## 拖动过程中不写盘，松手才存。
+## 自己接鼠标反而简单：按下只记下"可能被拖的是哪一页"，鼠标**真的移动了**才开始拖，
+## 鼠标经过别的标签时就把**页面**搬过去，标签栏随后跟着子节点刷新——顺序只有一个来源，
+## 永远对得上，也不需要逐帧核对。拖动过程中不写盘，松手才存。
+##
+## 为什么要等移动：单点一下也会走"按下"这条路。要是按下就抬起卡片，点一下标签
+## 就会看到卡片闪一下、还白写一次盘——点击和拖动必须分开。
 func _on_tab_bar_input(event: InputEvent) -> void:
 	var bar := _tabs.get_tab_bar()
 	if event is InputEventMouseButton:
@@ -419,23 +428,37 @@ func _on_tab_bar_input(event: InputEvent) -> void:
 		if mb.button_index != MOUSE_BUTTON_LEFT:
 			return
 		if mb.pressed:
-			var i := bar.get_tab_idx_at_point(mb.position)
-			_tab_drag_child = _tabs.get_child(i) if i >= 0 else null
-			if _tab_drag_child != null and _tab_ghost != null:
-				_tab_ghost.pick_up(bar.get_tab_title(i), bar.get_tab_rect(i).size,
-					_tab_event_global(bar, mb.position))
-		elif _tab_drag_child != null:
+			_tab_press_pos = mb.position
+			_tab_press_index = bar.get_tab_idx_at_point(mb.position)
 			_tab_drag_child = null
-			if _tab_ghost != null:
-				_tab_ghost.drop()
-			Game.tab_order = _tab_child_order()
-			Game.save_game()
+		else:
+			if _tab_drag_child != null:
+				_tab_drag_child = null
+				if _tab_ghost != null:
+					_tab_ghost.drop()
+				Game.tab_order = _tab_child_order()
+				Game.save_game()
+			_tab_press_index = -1
 		return
 
-	if event is InputEventMouseMotion and _tab_drag_child != null:
+	if event is InputEventMouseMotion:
 		var mm := event as InputEventMouseMotion
+		# 松手之后照样会收到移动事件，只认"按住不放"的那些
+		if _tab_press_index < 0 or not (mm.button_mask & MOUSE_BUTTON_MASK_LEFT):
+			return
+		var at := _tab_event_global(bar, mm.position)
+		if _tab_drag_child == null:
+			# 还在地板里：这点抖动算点击，不算拖动
+			if mm.position.distance_to(_tab_press_pos) < TAB_DRAG_THRESHOLD:
+				return
+			_tab_drag_child = _tabs.get_child(clampi(_tab_press_index, 0,
+				_tabs.get_child_count() - 1))
+			if _tab_drag_child != null and _tab_ghost != null:
+				_tab_ghost.pick_up(bar.get_tab_title(_tab_press_index),
+					bar.get_tab_rect(_tab_press_index).size, at)
+			return     # 起步这一帧只把卡片抬起来，先不急着换位
 		if _tab_ghost != null:
-			_tab_ghost.follow(_tab_event_global(bar, mm.position))
+			_tab_ghost.follow(at)
 		var to := bar.get_tab_idx_at_point(mm.position)
 		if to >= 0 and to != _tab_drag_child.get_index():
 			_move_tab_page(_tab_drag_child, to)
