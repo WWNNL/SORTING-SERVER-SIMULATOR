@@ -1,7 +1,7 @@
 class_name RunLineFrame
 extends Control
 ## 编辑器里的"现在跑到第几行"白框 —— 和左侧可视化里框住当前元素的白框同一套语言：
-## 1px 白描边 + 一个指向这一行的指示三角，跟着执行位置走。
+## 1px 白描边 + 一个指向这一行的指示三角，跟着执行位置走，换行时平滑滑过去。
 ##
 ## 三角放在**行尾右侧**而不是装订线里：装订线是行号的地盘，
 ## 三角压上去正好盖住行号（两位数时盖得严严实实），而右边通常是空的。
@@ -22,11 +22,33 @@ const MIN_W := 30.0     ## 空行也得框得出一个看得见的方框
 const EDGE := 4.0       ## 离编辑器右边缘留一点，别把滚动条圈进去
 const TAB_SPACES := 4   ## 和编辑器的 indent_size 一致，只在量宽度时用
 
+## 平滑跟随的时间常数（秒）。用指数逼近而不是固定时长的补间：速度正比于剩余距离，
+## 所以跨 2 行和跨 30 行都是"起步快、落位稳"，不会跳得越远追得越久；
+## 帧率无关，也不用像可视化那样按事件频率限流（那边要同时管几十个元素，
+## 这里只有一个白框，而且是"追一个目标"而不是"并排播一堆动画"）。
+const GLIDE_TAU := 0.07
+## 离目标小于这么多像素就直接吸附：指数逼近的尾巴很长，
+## 最后几像素会以"每帧不到一像素"爬好几百毫秒，收在这里看不出来但省掉一大截动画时间。
+const GLIDE_SNAP := 1.5
+## 允许落后的最大距离（像素）。代码跑得快时执行位置每几帧就跳一次，
+## 指数逼近永远追不上，白框会越飘越远——飘过 6 行就干脆落到位，重新起滑。
+## 可视化那边也是同一个思路：宁可少一点动画，也不要让画面停在错误的位置上。
+const GLIDE_MAX_LAG := 120.0
+
 var editor: TextEdit = null
 
 ## 要框住的行号，1 起（和 VM 的行号一致）。0 表示不显示。
 var _line := 0
+## 当前**画出来**的矩形（平滑动画的中间态）
 var _rect := Rect2()
+## 目标矩形（这一行现在该在哪儿）
+var _target := Rect2()
+## 是否正在平滑跟随。只有"换行"才置位；滚动、缩放导致的位移直接吸附。
+var _glide := false
+## 视图指纹：滚动位置与编辑器尺寸。用来区分"换行了"和"画面自己动了"。
+var _last_vscroll := -1
+var _last_hscroll := -1
+var _last_size := Vector2.ZERO
 
 
 func _init() -> void:
@@ -46,19 +68,39 @@ func show_line(line: int) -> void:
 		clear()
 		return
 	var changed := line != _line
+	var appearing := not visible
 	_line = line
 	visible = true
-	if changed:
+	if appearing:
+		# 刚出现（开始运行 / 切回编辑器页）：直接落在目标上，
+		# 不要从上一次消失时的位置滑过来。
+		_glide = false
 		_follow()
 		_refresh_rect()
-		queue_redraw()
+		# 顺手立起视图指纹：不然下一帧会拿"未初始化"和当前滚动位置比，
+		# 判成"视图动过"而把刚开始的平滑取消掉。
+		_remember_view()
+		return
+	if not changed:
+		return
+	# 换行才平滑：从当前矩形滑向新行，宽窄也一起渐变。
+	# 顺序要紧：必须先把 _glide 立起来，_refresh_rect() 才不会把 _rect 直接吸附过去。
+	# 需要滚动时例外——那一行的文本本身是瞬移进视野的，白框跟着瞬移才对得上。
+	_glide = not _follow()
+	_refresh_rect()
+	if _target.size.y <= 0.0:
+		# 这一行还量不出矩形（编辑器刚切回来、排版还没算完）：
+		# 这时候起滑会从"空矩形"也就是左上角飞出来，不如等下一帧量准了直接吸附。
+		_glide = false
 
 
 func clear() -> void:
 	if not visible and _line == 0:
 		return
 	_line = 0
+	_glide = false
 	_rect = Rect2()
+	_target = Rect2()
 	visible = false
 	queue_redraw()
 
@@ -69,20 +111,82 @@ func current_line() -> int:
 
 # ---------------------------------------------------------------- 几何
 
-func _process(_delta: float) -> void:
+func _process(delta: float) -> void:
 	if not visible or editor == null or not is_visible_in_tree():
 		return
-	# 玩家自己滚动、窗口缩放、字号变化都会让矩形变位置，逐帧比一下最省心：
-	# 只有真的变了才重画，而重画的是这个覆盖层本身，不会带着文本一起重绘。
+
+	var view_moved := _view_moved()
 	var r := _line_rect()
-	if r == _rect:
+	if r.size.y <= 0.0:
+		# 目标行不在视野里（或编辑器刚切回来还没排版好）：滚进来再看
+		_follow()
+		r = _line_rect()
+	_remember_view()
+	_target = r
+
+	if _target.size.y <= 0.0:
+		# 量不到这一行（不在视野里、排版还没算完）：不滑，贴上去（通常就是隐藏）
+		_glide = false
+		if _rect != _target:
+			_rect = _target
+			queue_redraw()
 		return
-	_rect = r
-	queue_redraw()
+
+	if view_moved:
+		# 滚动/缩放是瞬移，白框也得瞬移，否则看着像和代码脱节
+		_glide = false
+	if _glide:
+		if absf(_rect.position.y - _target.position.y) > GLIDE_MAX_LAG:
+			# 追不上了：直接落到位，别越飘越远
+			_rect = _target
+			_glide = false
+			queue_redraw()
+			return
+		var next := _approach(_rect, _target, delta)
+		if _nearly(next, _target):
+			next = _target
+			_glide = false
+		if next != _rect:
+			_rect = next
+			queue_redraw()
+		return
+
+	if _rect != _target:
+		_rect = _target
+		queue_redraw()
+
+
+## 指数逼近：越远走得越快，落位前自动减速。
+func _approach(from: Rect2, to: Rect2, delta: float) -> Rect2:
+	var k := 1.0 - exp(-delta / GLIDE_TAU)
+	return Rect2(from.position.lerp(to.position, k), from.size.lerp(to.size, k))
+
+
+static func _nearly(a: Rect2, b: Rect2) -> bool:
+	return absf(a.position.x - b.position.x) < GLIDE_SNAP \
+		and absf(a.position.y - b.position.y) < GLIDE_SNAP \
+		and absf(a.size.x - b.size.x) < GLIDE_SNAP \
+		and absf(a.size.y - b.size.y) < GLIDE_SNAP
+
+
+## 视图自己动了没有（滚动条、编辑器尺寸）。这类位移不参与平滑。
+func _view_moved() -> bool:
+	return int(editor.scroll_vertical) != _last_vscroll \
+		or int(editor.scroll_horizontal) != _last_hscroll \
+		or size != _last_size
+
+
+func _remember_view() -> void:
+	_last_vscroll = int(editor.scroll_vertical)
+	_last_hscroll = int(editor.scroll_horizontal)
+	_last_size = size
 
 
 func _refresh_rect() -> void:
-	_rect = _line_rect()
+	_target = _line_rect()
+	if not _glide:
+		_rect = _target
+	queue_redraw()
 
 
 ## 目标行的矩形（编辑器局部坐标）。行不可见或越界时返回空矩形。
@@ -142,20 +246,22 @@ func _content_right() -> float:
 
 ## 让目标行进入视野。只在这一行本来就在视野外时才滚动——
 ## 玩家正自己翻代码的时候，不该被运行位置抢走滚动条。
+## 返回值表示**这次真的滚了没有**：滚了的话白框要跟着瞬移（见 show_line）。
 ##
 ## 注意单位：TextEdit.scroll_vertical 是**行**，不是像素
 ## （实测设 3 之后 get_first_visible_line() 就是 3）。写成"行 × 行高"那种
 ## 像素换算会被 clamp 到最底部，画面看着像"跳到最后一行"。
-func _follow() -> void:
+func _follow() -> bool:
 	if editor == null or _line <= 0:
-		return
+		return false
 	var li := _line - 1
 	var first := editor.get_first_visible_line()
 	var last := editor.get_last_full_visible_line()
 	if li >= first and li <= last:
-		return
+		return false
 	var visible := maxi(1, editor.get_visible_line_count())
 	editor.scroll_vertical = maxi(0, li - visible / 2)
+	return true
 
 
 # ---------------------------------------------------------------- 绘制

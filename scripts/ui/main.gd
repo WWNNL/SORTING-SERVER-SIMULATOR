@@ -36,6 +36,8 @@ var _run_stage := 0
 var _run_id := 0
 var _sorted_target: Array = []
 var _console: Array = []
+## 上一次真正执行到的行号。用来把 VM 偶尔报出的 0 挡掉（见 current_exec_line）
+var _last_exec_line := 0
 
 ## 电费：本次任务累计产生多少、其中已从余额扣掉多少
 var _bill_accrued := 0.0
@@ -402,12 +404,19 @@ func state_name() -> String:
 ## 只回答"该框哪一行"，不管怎么画：运行/暂停时跟着 VM 的取指位置走，
 ## 出错时停在出错那一行（比停在崩溃前的最后一条指令更有用），
 ## 跑完或待机就没有可框的行了。
+##
+## 注意 VM 的取指位置**会短暂地报 0**：刚进入一个函数时新栈帧的 pc 还是 0
+## （引导代码那几条指令的行号也是 0）。这种 0 不当成"没得框"，而是保持上一行——
+## 否则每进一次函数白框就消失再出现，滑不动、还闪。
 func current_exec_line() -> int:
 	if _vm == null:
 		return 0
 	match _state:
 		ST_RUNNING, ST_PAUSED:
-			return _vm.current_line()
+			var line := _vm.current_line()
+			if line > 0:
+				_last_exec_line = line
+			return _last_exec_line
 		ST_ERROR:
 			return int(_vm.error["line"])
 	return 0
@@ -586,6 +595,7 @@ func _clear_task() -> void:
 	_pay_accum = 0.0
 	_elapsed = 0.0
 	_step_accum = 0.0
+	_last_exec_line = 0
 	if _viz != null:
 		_viz.clear()
 	_update_stat_labels(get_run_info())
