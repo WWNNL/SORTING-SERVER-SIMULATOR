@@ -19,7 +19,6 @@ const C_RED := Color("#ff4d4f")
 const C_RED_DIM := Color("#5a1416")     ## 面板描边，暗一档，别抢角标
 const C_PANEL := Color("#0d0506")       ## 底色：黑里透一点红
 const C_BODY := Color("#e8d8d8")        ## 正文，比平时的 TEXT_HI 再暖一点
-const VEIL := Color(0, 0, 0, 0.55)      ## 背景压暗
 
 # ---------------------------------------------------------------- 尺寸
 const PANEL_W := 560.0
@@ -218,12 +217,10 @@ func _process(delta: float) -> void:
 
 # ---------------------------------------------------------------- 输入
 
-func _draw() -> void:
-	# 背景压暗。整棵子树跟着 modulate 一起闪，所以这里画一层就够——
-	# 屏幕跟灯一起明灭，才像警报而不是"某个面板在淡入"。
-	draw_rect(Rect2(Vector2.ZERO, size), VEIL)
-
-
+## 只在面板上画东西，铺满全屏的这层是**完全透明**的：
+## 它只负责吃鼠标事件（点别处关闭、弹窗开着时点不到底下的界面）。
+## 刻意不做背景压暗：这套界面本来就是黑的，压暗只会把旁边的面板一起弄脏，
+## 看着像画面出问题，而不是"这里有个弹窗"。
 func _gui_input(event: InputEvent) -> void:
 	if not (event is InputEventMouseButton):
 		return
