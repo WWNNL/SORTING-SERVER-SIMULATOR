@@ -532,7 +532,24 @@ func switch_file(index: int, force := false) -> void:
 	Game.save_game()
 
 	if run_active():
-		log_line("已切换到 %s。正在运行的仍是 %s，不受影响。" % [name, _run_file_name], "sys")
+		log_line("已切换到 %s。正在运行的仍是 %s，不受影响；再点「运行」才会换算法。"
+			% [name, _run_file_name], "sys")
+
+
+## 打断当前这一局，不结算、不留成绩。用于"编辑器换到别的文件后又点了运行/单步"——
+## 那是玩家明确要换算法跑，不是想接着看旧的。
+func interrupt_run(reason: String) -> void:
+	if not run_active() and _vm == null:
+		return
+	var was := _run_file_name
+	if _vm != null:
+		_vm.status = "halted"
+		_vm.halted_reason = reason
+	_clear_task()
+	_state = ST_IDLE
+	_emit_state()
+	if not was.is_empty():
+		log_line("已打断 %s 的运行：%s。" % [was, reason], "warn")
 
 
 func _on_tab_changed(idx: int) -> void:
@@ -578,6 +595,10 @@ func select_stage(index: int) -> void:
 # ================================================================ 运行控制
 
 func _on_run_pressed() -> void:
+	# 编辑器换到别的文件以后再点「运行」，意思是"跑这个新算法"：
+	# 先把旧的那一局打断（不结算），再从新文件重新开局。
+	if run_active() and not is_running_file_current():
+		interrupt_run("换用 %s" % current_file_name())
 	match _state:
 		ST_RUNNING:
 			return
@@ -608,7 +629,10 @@ func _on_stop_pressed() -> void:
 
 
 ## 单步：没有题目（或上一局已结束）就先生成一局并停住，之后每次只推进一条指令。
+## 和「运行」同一条规矩：编辑器换到别的文件时，单步也从新文件重新开局。
 func _on_step_pressed() -> void:
+	if run_active() and not is_running_file_current():
+		interrupt_run("换用 %s" % current_file_name())
 	if _vm == null or _state == ST_DONE or _state == ST_ERROR:
 		if not _prepare_run():
 			return
