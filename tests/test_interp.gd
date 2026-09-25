@@ -27,6 +27,20 @@ func _initialize() -> void:
 	_test_error("不支持的语法 import", "import os\ndef sort(a):\n    return a\n", "模块系统")
 	_test_error("死循环", "def sort(a):\n    while True:\n        pass\n", "死循环")
 
+	# 循环体里提前 return：栈是各帧共用的，返回时若不收回本帧留下的东西，
+	# 循环的迭代器会漏给调用方，下一次调用就会拿它当函数用（曾经真的这么炸）。
+	# 断言按**下标**写，不依赖 _make_array 生成的具体数值。
+	_test_log("for 里提前 return",
+		"def hit(a, n):\n    for i in range(len(a)):\n        if i == n:\n            return i * 10\n    return -1\ndef sort(a):\n    print(hit(a, 3), hit(a, 99))\n    return a\n",
+		"30 -1")
+	_test_log("while 里提前 return",
+		"def hit(a, n):\n    i = len(a) - 1\n    while i >= 0:\n        if i == n:\n            return i * 10\n        i -= 1\n    return -1\ndef sort(a):\n    print(hit(a, 3), hit(a, 99))\n    return a\n",
+		"30 -1")
+	# 提前 return 之后调用方还要继续用栈上的东西，别被顺手清掉
+	_test_log("提前 return 后调用方继续运算",
+		"def hit(a, n):\n    for i in range(len(a)):\n        if i == n:\n            return 1\n    return 0\ndef sort(a):\n    print(hit(a, 3) + hit(a, 99) * 10)\n    return a\n",
+		"1")
+
 	_test_events("可视化埋点", BUBBLE)
 	_test_moves("冒泡：每次交换 = 2 次移动", BUBBLE, 2, true)
 	_test_moves("选择：每次交换 = 2 次移动", SELECTION, 2, true)
@@ -84,6 +98,22 @@ func _test_expr(name: String, code: String, _checks: Array) -> void:
 		return
 	_pass += 1
 	print("  [通过] %-22s 输出=%s" % [name, str(r["log"])])
+
+
+## 断言 print 出来的内容（用 " " 连接）。比只断言"跑得通"更能抓住返回值错乱的问题。
+func _test_log(name: String, code: String, expected: String) -> void:
+	var r := _run(code, _make_array(8))
+	if not r["ok"]:
+		_fail += 1
+		print("  [失败] %s —— %s" % [name, r["error"]])
+		return
+	var got: String = " ".join(PackedStringArray(r["log"]))
+	if got != expected:
+		_fail += 1
+		print("  [失败] %s —— 期望 '%s'，实际 '%s'" % [name, expected, got])
+		return
+	_pass += 1
+	print("  [通过] %-22s 输出=%s" % [name, got])
 
 
 func _test_error(name: String, code: String, needle: String) -> void:

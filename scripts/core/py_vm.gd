@@ -99,6 +99,7 @@ func setup(compiled: Dictionary, arr: PyObjects.PyList, entry: String,
 func start() -> void:
 	frames = [{
 		"code": module_code, "pc": 0, "scope": globals, "temps": [], "name": "<模块>",
+		"base": 0,
 	}]
 	status = "running"
 
@@ -394,6 +395,8 @@ func _do_call(nargs: int, line: int) -> void:
 			scope[pf.params[k]] = args[k]
 		frames.append({
 			"code": pf.code, "pc": 0, "scope": scope, "temps": [], "name": pf.name,
+			# 进这一帧时栈的高度。返回时要把栈收回这里，见 _do_return。
+			"base": stack.size(),
 		})
 		_check_ram(line)
 	elif fn is PyObjects.PyBuiltin:
@@ -673,7 +676,15 @@ func _do_return(val: Variant) -> void:
 		status = "done"
 		halted_reason = "程序结束"
 		return
+	# 栈是各帧共用的，而函数可能带着东西就返回了——最典型的是 for 循环：
+	# 迭代器在循环期间一直躺在栈上，循环体里 `return` 就会把它留在那儿，
+	# 于是调用方多出一个"看不见的"栈顶，下一次调用就会拿它当函数用
+	# （实测报错：'{ "src": …, "i": 1 }' 不是函数，不能调用）。
+	# 所以返回前把栈收回到本帧进入时的高度，只留下返回值。
+	var base := int(frames[-1].get("base", 0))
 	frames.pop_back()
+	while stack.size() > base:
+		stack.pop_back()
 	stack.append(val)
 
 
