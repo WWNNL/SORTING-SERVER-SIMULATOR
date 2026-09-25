@@ -75,6 +75,8 @@ var _tab_editor: TabEditor
 var _error_popup: ErrorPopup
 ## 正在被拖动的标签页（null = 没在拖）。拖动期间只搬页面，松手才写盘。
 var _tab_drag_child: Node = null
+## 拖动时跟着光标走的那张小卡片（见 TabDragGhost）
+var _tab_ghost: TabDragGhost
 
 
 func _ready() -> void:
@@ -153,6 +155,10 @@ func _build() -> void:
 	# 报错弹窗放在最后一个：它就是"最上层"，压住补全框和所有标签页
 	_error_popup = ErrorPopup.new()
 	add_child(_error_popup)
+
+	# 拖动标签页时跟手的小卡片。靠 z_index 压住补全框、但低于报错弹窗，所以加在弹窗之前。
+	_tab_ghost = TabDragGhost.new()
+	add_child(_tab_ghost)
 
 
 func _build_topbar() -> Control:
@@ -415,16 +421,29 @@ func _on_tab_bar_input(event: InputEvent) -> void:
 		if mb.pressed:
 			var i := bar.get_tab_idx_at_point(mb.position)
 			_tab_drag_child = _tabs.get_child(i) if i >= 0 else null
+			if _tab_drag_child != null and _tab_ghost != null:
+				_tab_ghost.pick_up(bar.get_tab_title(i), bar.get_tab_rect(i).size,
+					_tab_event_global(bar, mb.position))
 		elif _tab_drag_child != null:
 			_tab_drag_child = null
+			if _tab_ghost != null:
+				_tab_ghost.drop()
 			Game.tab_order = _tab_child_order()
 			Game.save_game()
 		return
 
 	if event is InputEventMouseMotion and _tab_drag_child != null:
-		var to := bar.get_tab_idx_at_point((event as InputEventMouseMotion).position)
+		var mm := event as InputEventMouseMotion
+		if _tab_ghost != null:
+			_tab_ghost.follow(_tab_event_global(bar, mm.position))
+		var to := bar.get_tab_idx_at_point(mm.position)
 		if to >= 0 and to != _tab_drag_child.get_index():
 			_move_tab_page(_tab_drag_child, to)
+
+
+## gui_input 给的是控件局部坐标，转成全局的好让浮层定位
+func _tab_event_global(bar: TabBar, local: Vector2) -> Vector2:
+	return bar.get_global_rect().position + local
 
 
 ## 把某一页搬到指定位置。正在看的那一页跟着走，不会被搬走。
