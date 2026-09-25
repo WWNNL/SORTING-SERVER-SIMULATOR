@@ -701,6 +701,17 @@ func _on_tab_changed(idx: int) -> void:
 		c.call("refresh")
 
 
+## 跳到某一页。按**节点身份**找下标，绝不写死序号——
+## 标签页可以拖动排序，写死的下标在玩家挪过页序之后就会指到别的页面上
+## （双击算法文件跳编辑器就踩过这个坑：原来写的是 current_tab = 4）。
+func show_tab(page: Node) -> void:
+	if page == null or _tabs == null:
+		return
+	var i := page.get_index()
+	if i >= 0 and i < _tabs.get_tab_count():
+		_tabs.current_tab = i
+
+
 ## 换一个阶段来挑战。只能选已经通过的阶段（或当前进度那一关）。
 ##
 ## 和切换算法文件同理：阶段换了，旧题目就作废，必须把当前这次跑停掉，

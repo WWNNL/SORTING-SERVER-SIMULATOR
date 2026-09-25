@@ -209,8 +209,9 @@ func _on_activated(idx: int) -> void:
 	if not Game.is_unlocked(idx):
 		_on_unlock()
 		return
-	# 双击直接跳到编辑器（标签页顺序：文件 / 阶段 / 状况 / 升级 / 编辑器）
-	main._tabs.current_tab = 4
+	## 双击直接跳到编辑器。按**节点**跳，不写死下标——
+## 标签页可以拖动排序，写死的第 5 页在玩家挪过页序之后就不是编辑器了。
+	main.show_tab(main._tab_editor)
 
 
 func _on_unlock() -> void:
