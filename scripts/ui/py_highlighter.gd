@@ -12,11 +12,18 @@ extends SyntaxHighlighter
 ##   · def / return 单独一色 —— 它们标记"结构"，扫代码时最先要看的就是这些
 ##   · 控制流、逻辑运算、常量各一色 —— 读条件表达式时能一眼分清"流程"和"数据"
 ##   · 内置函数、数组方法、用户函数各一色 —— 区分"服务器给的"和"自己写的"
-##   · 关键字加粗 —— 除了颜色再多一个维度（注释不用斜体，原因见 C_COMMENT 处）
+##
+## 加粗是"写了但不生效"的：实测把 def / while 和普通标识符里同一个字形（字母 l）的
+## 字干放在 10 倍放大下并排比，都是一像素宽——和 C_COMMENT 处说的一样，
+## 当前引擎忽略了高亮字典里的字重/字形属性。
+## 所以类别之间的区分**必须完全由颜色承担**，这也是控制流原来用纯白时等于没高亮的原因。
+##
+## 控制流原来是纯白 #ffffff，而正文是 #d8d8d8：在黑底 12px 点阵字下这两者几乎分不出来。
+## 现在换成暖红，和 def 的粉色也拉得开——两者蓝色通道差 90 多，缩到 12px 也不会认错。
 
 # ---- 颜色
 const C_DEF := Color("#ff9ecd")        ## def / return
-const C_FLOW := Color("#ffffff")       ## if / for / while / break ...
+const C_FLOW := Color("#ff7b72")       ## if / elif / else / for / while / break …
 const C_LOGIC := Color("#d0a0ff")      ## and / or / not / in
 const C_CONST := Color("#ffb86c")      ## True / False / None
 const C_BUILTIN := Color("#8fd6ff")    ## len / range / max ...
@@ -122,6 +129,10 @@ func _props_for(t: int, word: String, toks: Array, idx: int) -> Dictionary:
 		PyLexer.T_STR:
 			return {"color": C_STRING}
 		PyLexer.T_OP:
+			# bold 照写不误（引擎哪天支持了就直接生效），但**不能指望它**：
+			# 实测把 def / while 和普通标识符里同一个字形的字干放到 10 倍放大下比，
+			# 都是一像素宽，和 italic 一样被当前引擎忽略。
+			# 所以类别之间的区分必须完全由颜色承担，改颜色才是真正改观感的一步。
 			if KW_DEF.has(word):
 				return {"color": C_DEF, "bold": true}
 			if KW_FLOW.has(word):
