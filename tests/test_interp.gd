@@ -41,6 +41,17 @@ func _initialize() -> void:
 		"def hit(a, n):\n    for i in range(len(a)):\n        if i == n:\n            return 1\n    return 0\ndef sort(a):\n    print(hit(a, 3) + hit(a, 99) * 10)\n    return a\n",
 		"1")
 
+	# random 模块
+	_test_permutation("random.shuffle 只重排不换元素",
+		"def sort(a):\n    random.shuffle(a)\n    return a\n")
+	_test_log("random.seed 可复现",
+		"def sort(a):\n    random.seed(7)\n    x = random.randint(1, 1000000)\n    random.seed(7)\n    y = random.randint(1, 1000000)\n    random.seed(8)\n    z = random.randint(1, 1000000)\n    print(x == y, x != z)\n    return a\n",
+		"True True")
+	_test_error("random 不存在的成员",
+		"def sort(a):\n    random.nope(a)\n    return a\n", "random 没有方法")
+	_test_error("shuffle 要数组",
+		"def sort(a):\n    random.shuffle(3)\n    return a\n", "shuffle() 需要 1 个参数")
+
 	_test_events("可视化埋点", BUBBLE)
 	_test_moves("冒泡：每次交换 = 2 次移动", BUBBLE, 2, true)
 	_test_moves("选择：每次交换 = 2 次移动", SELECTION, 2, true)
@@ -98,6 +109,30 @@ func _test_expr(name: String, code: String, _checks: Array) -> void:
 		return
 	_pass += 1
 	print("  [通过] %-22s 输出=%s" % [name, str(r["log"])])
+
+
+## 洗牌类操作的回归：结果必须是原数组的一个**排列**（元素一个不少、且真的打乱）。
+func _test_permutation(name: String, code: String) -> void:
+	var data := _make_array(10)
+	var r := _run(code, data)
+	if not r["ok"]:
+		_fail += 1
+		print("  [失败] %s —— %s" % [name, r["error"]])
+		return
+	var want := data.duplicate()
+	want.sort()
+	var got := (r["array"] as Array).duplicate()
+	got.sort()
+	if got != want:
+		_fail += 1
+		print("  [失败] %s —— 元素变了（洗牌只能重排，不能换元素）" % name)
+		return
+	if r["array"] == data:
+		_fail += 1
+		print("  [失败] %s —— 洗了和没洗一样" % name)
+		return
+	_pass += 1
+	print("  [通过] %-22s 10 个元素洗成排列" % name)
 
 
 ## 断言 print 出来的内容（用 " " 连接）。比只断言"跑得通"更能抓住返回值错乱的问题。

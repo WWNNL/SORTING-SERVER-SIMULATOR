@@ -174,7 +174,8 @@ func _props_for(t: int, word: String, toks: Array, idx: int) -> Dictionary:
 			# print 单独给色：它是唯一会往控制台写东西的函数
 			if word == "print":
 				return {"color": C_METHOD}
-			if PyVM.BUILTIN_NAMES.has(word):
+			# random 是新加的模块（shuffle / randint / seed），跟内置函数一个待遇
+			if word == "random" or PyVM.BUILTIN_NAMES.has(word):
 				return {"color": C_BUILTIN}
 			if _prev_is(toks, idx, "def"):
 				# sort 是服务器唯一要求的入口，标得最显眼

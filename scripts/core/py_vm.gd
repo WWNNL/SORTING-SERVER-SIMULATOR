@@ -24,6 +24,12 @@ var functions: Dictionary = {}
 var globals: Dictionary = {}
 var frames: Array = []
 var stack: Array = []
+
+## random 模块的值（一个带标记的字典）。玩家写 random.shuffle(a)、
+## random.randint(lo, hi)、random.seed(n)。放进 globals，玩家可以自己改掉它（标准行为）。
+## 随机数由 VM 私有的 _rng 提供，每次 setup 重新随机，保证每局都不同。
+var random_module: Dictionary = {}
+var _rng := RandomNumberGenerator.new()
 var builtins: Dictionary = {}
 
 var status := "ready"  ## ready / running / done / error
@@ -63,6 +69,9 @@ func setup(compiled: Dictionary, arr: PyObjects.PyList, entry: String,
 	module_code = compiled["code"]
 	functions = compiled["functions"]
 	globals = {}
+	# 每次运行重新掷一次种子：同一段代码两局的结果不一样
+	_rng.randomize()
+	globals["random"] = random_module
 	stack = []
 	frames = []
 	events = []
@@ -431,6 +440,13 @@ func _do_call_method(mname: String, nargs: int, line: int) -> void:
 		stack.append(r)
 		return
 
+	if obj == random_module:
+		var r2: Variant = _call_random_method(mname, args, line)
+		if status != "running":
+			return
+		stack.append(r2)
+		return
+
 	if obj is PyObjects.PyRange and mname == "index":
 		stack.append(null)
 		return
@@ -513,6 +529,40 @@ func _call_list_method(lst: PyObjects.PyList, mname: String, args: Array, line: 
 			items.clear()
 			return null
 	_fail("数组没有方法 '%s'。可用：%s" % [mname, ", ".join(LIST_METHODS)], line)
+	return null
+
+
+func _call_random_method(mname: String, args: Array, line: int) -> Variant:
+	match mname:
+		"shuffle":
+			if args.size() != 1 or not (args[0] is PyObjects.PyList):
+				_fail("shuffle() 需要 1 个参数（要洗的数组）", line)
+				return null
+			var items: Array = (args[0] as PyObjects.PyList).items
+			# Fisher–Yates：从后往前，每步跟它前面随机一个位置交换
+			for k in range(items.size() - 1, 0, -1):
+				var j := _rng.randi_range(0, k)
+				var t: Variant = items[k]
+				items[k] = items[j]
+				items[j] = t
+			return null
+		"randint":
+			if args.size() != 2 or not _is_int(args[0]) or not _is_int(args[1]):
+				_fail("randint() 需要 2 个整数参数（含两端）", line)
+				return null
+			var lo := int(args[0])
+			var hi := int(args[1])
+			if hi < lo:
+				_fail("randint() 的下界不能大于上界", line)
+				return null
+			return _rng.randi_range(lo, hi)
+		"seed":
+			if args.size() != 1 or not _is_int(args[0]):
+				_fail("seed() 需要 1 个整数参数", line)
+				return null
+			_rng.seed = int(args[0])
+			return null
+	_fail("random 没有方法 '%s'。可用：shuffle、randint、seed" % mname, line)
 	return null
 
 
