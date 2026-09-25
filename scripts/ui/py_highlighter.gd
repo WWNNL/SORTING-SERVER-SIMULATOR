@@ -53,14 +53,37 @@ var _lines: Dictionary = {}
 var editor: TextEdit = null
 
 
-## 文本变化后重建缓存。编辑器显式调用，不依赖引擎的回调时机。
+## 文本变化后重建缓存，并强制 TextEdit 丢掉它那份逐行高亮缓存。
+##
+## 为什么光调 clear_highlighting_cache() 不够（这一条是实测出来的）：
+## 本类是在 GDScript 里继承的，基类那条"通知编辑器清缓存"的路传不到编辑器
+## （同上，它拿不到 TextEdit）。而 TextEdit 是在**编辑动作进行中**就去查这一行的高亮的，
+## 那时我们的缓存还是改动前的那份，于是它把陈旧数据存进了自己的逐行缓存；
+## 等我们在 text_changed 里重建完，它已经不觉得那一行脏了，不会再查第二次。
+## 结果：敲回车 → 下面所有行的颜色整体错位一行；
+##       在一行里打字 → 刚敲的 while / if 一直是灰的，直到别的动作碰巧让它重查。
+##
+## 重新挂一次高亮器是确定能让 TextEdit 整份丢弃缓存的路径（实测有效），
+## 代价只是可见行重查一遍——和一次普通重绘同量级，所以每次刷新都做，不做条件判断。
 func refresh() -> void:
 	_rebuild()
 	clear_highlighting_cache()
+	_remount()
 
 
 func _update_cache() -> void:
 	_rebuild()
+
+
+## 摘掉再挂回来，强制 TextEdit 丢弃逐行高亮缓存。
+func _remount() -> void:
+	if editor == null:
+		return
+	var h := editor.syntax_highlighter
+	if h == null:
+		return
+	editor.syntax_highlighter = null
+	editor.syntax_highlighter = h
 
 
 func _rebuild() -> void:
