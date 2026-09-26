@@ -1012,10 +1012,15 @@ func _process(delta: float) -> void:
 
 	var budget := 0
 	if Game.is_frame_step():
-		# 逐帧放映：每帧恰好推进一条指令，不按 dt 累计——
-		# 画面跟着帧走，一帧一步，轨迹怎么走的一眼可见
+		# 逐行放映：每帧把"当前这一行"推进完，指示框跟着行走——一行一帧。
+		# 纯按指令数走的话（一帧一条指令），一行要好几帧才能换，
+		# 指示框会长时间停在原地，看起来就不是"一步步移动"。
 		_step_accum = 0.0
-		budget = 1
+		var ln := _vm.current_line()
+		var guard := 0
+		while _vm.current_line() == ln and guard < 128:
+			_vm.run_batch(1)
+			guard += 1
 	else:
 		_step_accum += float(Game.cpu_speed()) * dt
 		budget = int(_step_accum)
@@ -1237,8 +1242,8 @@ func _refresh_hardware_chips_only() -> void:
 	var now := Game.cpu_speed()
 	var rated := Game.cpu_rate()
 	if Game.is_frame_step():
-		# 逐帧放映：不是 1 步/秒，是每帧一步
-		cl.text = "逐帧 / %s 步 / 秒" % Prts.comma(rated)
+		# 逐行放映：不是某个步/秒，是每帧一行
+		cl.text = "逐行 / %s 步 / 秒" % Prts.comma(rated)
 		Prts.set_color_cached(cl, "cpu", Prts.WHITE, _color_cache)
 	elif now >= rated:
 		cl.text = "%s 步 / 秒" % Prts.comma(now)
