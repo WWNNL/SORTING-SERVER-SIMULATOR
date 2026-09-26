@@ -33,6 +33,8 @@ const STATE_NAMES := {
 var _vm: PyVM = null
 var _state := ST_IDLE
 var _step_accum := 0.0
+## 逐行档（滑条最左）的"下一行该在哪一秒走"的累计器
+var _line_accum := 0.0
 var _elapsed := 0.0
 var _run_n := 0
 var _run_stage := 0
@@ -841,6 +843,7 @@ func _clear_task() -> void:
 	_pay_accum = 0.0
 	_elapsed = 0.0
 	_step_accum = 0.0
+	_line_accum = 0.0
 	_last_exec_line = 0
 	_run_file_name = ""
 	if _viz != null:
@@ -1010,20 +1013,26 @@ func _process(delta: float) -> void:
 	_elapsed += dt
 	_accrue_power_bill(dt)
 
-	var budget := 0
+	var still_running := true
 	if Game.is_frame_step():
-		# 逐行放映：每帧把"当前这一行"推进完，指示框跟着行走——一行一帧。
-		# 纯按指令数走的话（一帧一条指令），一行要好几帧才能换，
-		# 指示框会长时间停在原地，看起来就不是"一步步移动"。
+		# 逐行档：1 行/秒。每过一秒把"当前这一行"推进完，指示框一行一行地走，
+		# 肉眼跟得上。纯按指令走（1 步/秒）一行要好几秒才换；一帧一行又太快、
+		# 指示框像在乱窜——一秒一行才是"看得最清楚"的那一档。
 		_step_accum = 0.0
-		var ln := _vm.current_line()
+		_line_accum += dt
 		var guard := 0
-		while _vm.current_line() == ln and guard < 128:
-			_vm.run_batch(1)
+		while _line_accum >= 1.0 and guard < 8:
+			_line_accum -= 1.0
+			var ln := _vm.current_line()
+			var g2 := 0
+			while _vm.current_line() == ln and g2 < 128:
+				_vm.run_batch(1)
+				g2 += 1
 			guard += 1
+		still_running = _vm.status == "running"
 	else:
 		_step_accum += float(Game.cpu_speed()) * dt
-		budget = int(_step_accum)
+		var budget := int(_step_accum)
 		if budget <= 0:
 			_emit_tick()
 			return
@@ -1033,8 +1042,8 @@ func _process(delta: float) -> void:
 			_step_accum = 0.0
 		else:
 			_step_accum -= float(budget)
+		still_running = _vm.run_batch(budget)
 
-	var still_running := _vm.run_batch(budget)
 	_consume_events()
 	if still_running:
 		_emit_tick()
@@ -1242,8 +1251,8 @@ func _refresh_hardware_chips_only() -> void:
 	var now := Game.cpu_speed()
 	var rated := Game.cpu_rate()
 	if Game.is_frame_step():
-		# 逐行放映：不是某个步/秒，是每帧一行
-		cl.text = "逐行 / %s 步 / 秒" % Prts.comma(rated)
+		# 逐行档：最低速度 = 1 行/秒
+		cl.text = "1 行 / %s 步 / 秒" % Prts.comma(rated)
 		Prts.set_color_cached(cl, "cpu", Prts.WHITE, _color_cache)
 	elif now >= rated:
 		cl.text = "%s 步 / 秒" % Prts.comma(now)
