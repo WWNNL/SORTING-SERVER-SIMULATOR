@@ -29,8 +29,12 @@ func min_cpu_ratio() -> float:
 ## 滑条最低档 = "逐行"：最低速度 1 行/秒——每过一秒把"当前这一行"推进完，
 ## 指示框一行一行地走，肉眼跟得上。纯按指令走（1 步/秒）一行要好几秒才换；
 ## 一帧一行又太快、指示框像在乱窜——一秒一行才是"看得最清楚"的那一档。
+##
+## 判定留 1.3 倍余量（约滑条最左 6%）：拖到最左常常停在差几像素的位置，
+## 按"精确等于 min"判的话会退回步/秒档（"1 步/秒"），
+## 玩家重新拖到左边会以为档位丢了。
 func is_frame_step() -> bool:
-	return cpu_ratio <= min_cpu_ratio()
+	return cpu_ratio <= min_cpu_ratio() * 1.3
 
 var coins := 0
 var tiers := {"cpu": 0, "ram": 0, "disk": 0, "psu": 0}
@@ -101,7 +105,11 @@ func cpu_percent() -> int:
 
 func set_cpu_ratio(r: float) -> void:
 	var clamped := clampf(r, min_cpu_ratio(), 1.0)
-	if is_equal_approx(clamped, cpu_ratio):
+	# 这里**不能**用 is_equal_approx：它的容差下限是 1e-5，而最低档的比例本身
+	# 只有 7.7e-6 量级——整个最低区段会被判成"值没变"直接返回，
+	# 于是拖到左边之后比例卡在旧值上、模式也就回不去了
+	# （实测：比例停在 min 的 1.05 倍时就再也改不动，界面显示"1 步/秒"）。
+	if clamped == cpu_ratio:
 		return
 	cpu_ratio = clamped
 	speed_changed.emit()
