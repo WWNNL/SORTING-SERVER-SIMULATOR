@@ -196,8 +196,10 @@ func _build_topbar() -> Control:
 	var chips := HBoxContainer.new()
 	chips.add_theme_constant_override("separation", 0)
 	_chip["power"] = _make_chip("供电", "0W / 0W", 108)
-	# 处理器单独一格：滑条可以在额定速度以下调速，不显示出来玩家不知道自己在跑多快
-	_chip["cpu"] = _make_chip("处理器", "0 步 / 秒", 118)
+	# 处理器单独一格：滑条可以在额定速度以下调速，不显示出来玩家不知道自己在跑多快。
+	# 数值给 150px 固定宽（最长那句"128,700 / 130,000 步 / 秒"是 146px），
+	# 这样调速时芯片宽度不变、顶栏不会跟着挪。
+	_chip["cpu"] = _make_chip("处理器", "0 步 / 秒", 118, 150.0)
 	_chip["ram"] = _make_chip("内存", "0 / 0 B", 108)
 	_chip["disk"] = _make_chip("硬盘", "0 / 0 B", 108)
 	_chip["state"] = _make_chip("状态", "待机", 88)
@@ -221,12 +223,18 @@ func _build_topbar() -> Control:
 	return pc
 
 
-func _make_chip(caption: String, value: String, width := 112) -> Dictionary:
+## 顶栏指标格。value_w 是数值那行的**固定**宽度（0 = 随文本）：
+## 处理器那格会写"当前 / 额定"，最长 146px；不固定的话芯片宽度会随文本变
+## （实测 146 → 168px），一拖滑条整条顶栏就跟着挪。
+func _make_chip(caption: String, value: String, width := 112, value_w := 0.0) -> Dictionary:
 	var box := VBoxContainer.new()
 	box.add_theme_constant_override("separation", 1)
 	box.custom_minimum_size = Vector2(width, 0)
 	box.add_child(Prts.dim_label(caption))
 	var v := Prts.label(value, Prts.FS_SMALL, Prts.TEXT_HI)
+	if value_w > 0.0:
+		v.custom_minimum_size = Vector2(value_w, 0)
+		v.clip_text = true     # 万一将来文案更长，裁掉而不是把顶栏撑开
 	box.add_child(v)
 	var root := Prts.pad(box, 14, 0)
 	return {"root": root, "value": v}
@@ -1253,14 +1261,14 @@ func _refresh_hardware_chips_only() -> void:
 	if Game.is_frame_step():
 		# 逐行档：最低速度 = 1 行/秒
 		cl.text = "1 行 / %s 步 / 秒" % Prts.comma(rated)
-		Prts.set_color_cached(cl, "cpu", Prts.WHITE, _color_cache)
 	elif now >= rated:
 		cl.text = "%s 步 / 秒" % Prts.comma(now)
 	else:
 		# 调速后写成"当前 / 额定"，一眼看出是滑条压下来的还是硬件就这么多
 		cl.text = "%s / %s 步 / 秒" % [Prts.comma(now), Prts.comma(rated)]
-		Prts.set_color_cached(cl, "cpu", Prts.TEXT_HI if now >= rated else Prts.WHITE,
-			_color_cache)
+	# 颜色统一在这里定：以前只有 else 分支设色，全速跑回来时会留着"降速"的白色
+	Prts.set_color_cached(cl, "cpu", Prts.TEXT_HI if now >= rated else Prts.WHITE,
+		_color_cache)
 
 	var rl: Label = _chip["ram"]["value"]
 	var used := 0
