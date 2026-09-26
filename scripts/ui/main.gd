@@ -1010,17 +1010,24 @@ func _process(delta: float) -> void:
 	_elapsed += dt
 	_accrue_power_bill(dt)
 
-	_step_accum += float(Game.cpu_speed()) * dt
-	var budget := int(_step_accum)
-	if budget <= 0:
-		_emit_tick()
-		return
-	# 再兜一层：单帧指令数硬上限
-	if budget > MAX_STEPS_PER_FRAME:
-		budget = MAX_STEPS_PER_FRAME
+	var budget := 0
+	if Game.is_frame_step():
+		# 逐帧放映：每帧恰好推进一条指令，不按 dt 累计——
+		# 画面跟着帧走，一帧一步，轨迹怎么走的一眼可见
 		_step_accum = 0.0
+		budget = 1
 	else:
-		_step_accum -= float(budget)
+		_step_accum += float(Game.cpu_speed()) * dt
+		budget = int(_step_accum)
+		if budget <= 0:
+			_emit_tick()
+			return
+		# 再兜一层：单帧指令数硬上限
+		if budget > MAX_STEPS_PER_FRAME:
+			budget = MAX_STEPS_PER_FRAME
+			_step_accum = 0.0
+		else:
+			_step_accum -= float(budget)
 
 	var still_running := _vm.run_batch(budget)
 	_consume_events()
@@ -1229,13 +1236,17 @@ func _refresh_hardware_chips_only() -> void:
 	var cl: Label = _chip["cpu"]["value"]
 	var now := Game.cpu_speed()
 	var rated := Game.cpu_rate()
-	if now >= rated:
+	if Game.is_frame_step():
+		# 逐帧放映：不是 1 步/秒，是每帧一步
+		cl.text = "逐帧 / %s 步 / 秒" % Prts.comma(rated)
+		Prts.set_color_cached(cl, "cpu", Prts.WHITE, _color_cache)
+	elif now >= rated:
 		cl.text = "%s 步 / 秒" % Prts.comma(now)
 	else:
 		# 调速后写成"当前 / 额定"，一眼看出是滑条压下来的还是硬件就这么多
 		cl.text = "%s / %s 步 / 秒" % [Prts.comma(now), Prts.comma(rated)]
-	Prts.set_color_cached(cl, "cpu", Prts.TEXT_HI if now >= rated else Prts.WHITE,
-		_color_cache)
+		Prts.set_color_cached(cl, "cpu", Prts.TEXT_HI if now >= rated else Prts.WHITE,
+			_color_cache)
 
 	var rl: Label = _chip["ram"]["value"]
 	var used := 0

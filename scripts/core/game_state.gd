@@ -25,6 +25,13 @@ const MIN_CPU_RATIO := 0.01
 func min_cpu_ratio() -> float:
 	return 1.0 / maxf(float(cpu_rate()), 1.0)
 
+
+## 滑条最低档 = "逐帧放映"：运行每帧只推进一条指令，画面一帧一步。
+## 一秒一步的 1 步/秒反而看不出轨迹（一秒才跳一下，谈不上"轨迹"），
+## 逐帧播放才是"看得最清楚"的那一档。
+func is_frame_step() -> bool:
+	return cpu_ratio <= min_cpu_ratio()
+
 var coins := 0
 var tiers := {"cpu": 0, "ram": 0, "disk": 0, "psu": 0}
 ## 已通关的阶段数量。进度所在的阶段 = min(cleared, 最后一关)，

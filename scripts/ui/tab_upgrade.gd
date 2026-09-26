@@ -260,14 +260,15 @@ func _refresh_speed() -> void:
 
 	var now := Game.cpu_speed()
 	var rated := Game.cpu_rate()
-	value.text = "%s 步 / 秒" % Prts.comma(now)
+	# 最低档是逐帧放映，不是某个步/秒，标签和提示语都要说人话
+	var cur_txt := "逐帧放映（每帧一步）" if Game.is_frame_step() \
+		else "%s 步 / 秒" % Prts.comma(now)
+	value.text = cur_txt
 	Prts.set_color_cached(value, "speed", Prts.WHITE if now >= rated else Prts.TEXT_HI,
 		_color_cache)
-	# 一位小数才看得见 0.1% 的颗粒度；末尾教一下微调手势。
-	# 最低档是 1 步/秒，报百分比反而看不懂（0.0%），这里报步/秒。
 	(card["speed_hint"] as Label).text = \
-		"额定 %s 步 / 秒，当前 %s 步 / 秒。调慢只是看得更清楚：同一份工作耗时变长，总电费反而更高。拖动时按住 Shift 可 0.1%% 微调。" % [
-			Prts.comma(rated), Prts.comma(now)]
+		"额定 %s 步 / 秒，当前 %s。调慢只是看得更清楚：同一份工作耗时变长，总电费反而更高。拖到最左是逐帧放映（每帧一步），拖动时按住 Shift 可 0.1%% 微调。" % [
+			Prts.comma(rated), cur_txt]
 
 
 func refresh() -> void:
