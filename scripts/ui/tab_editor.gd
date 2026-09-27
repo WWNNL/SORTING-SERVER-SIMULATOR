@@ -5,6 +5,14 @@ extends VBoxContainer
 ## 每次按键都会跑一遍词法+语法+编译，把错误立刻显示在底部——
 ## 这样玩家在按"运行"之前就知道代码有没有问题，不用反复试错。
 
+## 代码区的缩放档位（Ctrl + 滚轮）。**只有 12/24/36 三档，不是连续缩放**：
+## 界面用的是点阵字体，字形画在 12px 网格上，只有整数倍字号能保住像素对齐；
+## 中间那些尺寸（14/16/18/20）会把轮廓点推到半像素上，而抗锯齿是关的，
+## 笔画宽度会在 1px/2px 之间跳、细笔画甚至整条消失（实测偏离网格的轮廓点数：
+## 12px→0、24px→0、36px→0，而 14px→25、16px→25、20px→25）。
+## 三个值直接取 FS_ 那三个常量——它们本来就是按这个字体的合法网格定的。
+const ZOOM_STEPS := [Prts.FS_BODY, Prts.FS_BIG, Prts.FS_HUGE]
+
 var main: Control
 
 var _edit: PyCodeEdit
@@ -84,7 +92,7 @@ func _build() -> void:
 	_edit.gutters_zero_pad_line_numbers = false
 	_edit.highlight_current_line = true
 	# 光标停在一个变量名上（或选中一段文字）时，全文里同名的都跟着亮起来。
-	# 这是引擎自带的能力，不用自己扫文本；配色见 prts.gd 的 word_highlighted_color
+	# 这是引擎自带的能力，不用自己扫文本；配色见 ngzr.gd 的 word_highlighted_color
 	# （默认那支是淡青色，和这套黑白灰不搭）。
 	_edit.highlight_all_occurrences = true
 	_edit.indent_automatic = true
@@ -102,6 +110,12 @@ func _build() -> void:
 	# 在这里 accept_event() 就能抢在 TextEdit 把 Tab 当缩进吃掉之前拿到它。
 	_edit.gui_input.connect(_on_edit_gui_input)
 	_edit.add_theme_font_size_override("font_size", Prts.FS_BODY)
+	# 代码不单独挂字体，跟着主题走（点阵字体）。运行行白框量行宽时读的就是这个
+	# "font"，所以它也会跟着用同一份（见 RunLineFrame）。
+	#
+	# 试过换成等宽轮廓字体（Cascadia Mono + 宋体）：列对齐是更好，但 12px 下宋体的
+	# 中文注释开着抗锯齿，和周围一圈点阵字摆在一起明显发虚——那正是这次要解决的问题，
+	# 所以又换回来了。缩进用的是空格，宽度仍然一致，只有行尾注释的列会跟着字宽浮动。
 	_edit.text_changed.connect(_on_text_changed)
 	_edit.caret_changed.connect(_on_caret_changed)
 	# 运行位置白框挂在编辑器内部：这样它拿到的就是编辑器局部坐标，
@@ -123,6 +137,11 @@ func _build() -> void:
 	# ---- 状态行：第一行语法状态，第二行快捷键提示
 	# 原来挤在一行里：状态标签被快捷键提示压到只剩 115px（实测与文字
 	# 等宽、零余量），语法报错一长就被 clip 裁掉。拆成两行各放得下。
+	#
+	# 快捷键提示那行要 autowrap：它比状态行长得多，而且**会随字号变宽**——
+	# 16px 下这行实测 714px，而右栏只有 ~660px。不折行的话它会把整个右栏顶宽
+	# （实测右栏 min 变 734），进而把左右两栏的总宽顶到 1654、越出 1600 的窗口。
+	# 交给 autowrap 按可用宽度折行，窗口拉宽时又会自己收回一行。
 	var foot := PanelContainer.new()
 	foot.add_theme_stylebox_override("panel", Prts.flat(Prts.PANEL, Prts.LINE, 0))
 	var foot_col := VBoxContainer.new()
@@ -131,6 +150,7 @@ func _build() -> void:
 	_status.clip_text = true
 	foot_col.add_child(_status)
 	var keys := Prts.dim_label("Tab 缩进　·　输入时自动补全　·　Ctrl+Space 手动补全　·　Ctrl+S 保存　·　Ctrl+Enter 运行")
+	keys.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	foot_col.add_child(keys)
 	foot.add_child(Prts.pad(foot_col, 10, 4))
 	add_child(foot)
@@ -267,6 +287,17 @@ func _shortcut_input(event: InputEvent) -> void:
 ## 键盘拦截。补全框开着时接管 Tab/Enter/方向键/Esc；
 ## 没开时，Tab 在标识符后面弹补全，其余情况放行给 TextEdit 做缩进。
 func _on_edit_gui_input(event: InputEvent) -> void:
+	# Ctrl + 滚轮缩放代码区。放在按键判断之前：滚轮不是按键，下面的逻辑会直接返回。
+	# 这里 accept_event() 之后 TextEdit 就收不到这次滚轮了，不会一边缩放一边滚页面；
+	# 不按 Ctrl 时照旧往下走，滚轮仍然是正常滚动。
+	if event is InputEventMouseButton:
+		var mb := event as InputEventMouseButton
+		if mb.pressed and mb.ctrl_pressed and mb.button_index in [
+				MOUSE_BUTTON_WHEEL_UP, MOUSE_BUTTON_WHEEL_DOWN]:
+			# 往上滚 = 放大（和浏览器/编辑器一致），往下滚 = 缩小
+			_zoom_code(1 if mb.button_index == MOUSE_BUTTON_WHEEL_UP else -1)
+			_edit.accept_event()
+		return
 	if not (event is InputEventKey):
 		return
 	var k := event as InputEventKey
@@ -298,6 +329,35 @@ func _on_edit_gui_input(event: InputEvent) -> void:
 		if _edit.has_word_before_caret():
 			_open_completion(false)
 			_edit.accept_event()
+
+
+## Ctrl + 滚轮：在 ZOOM_STEPS 里换一档（dir = -1 缩小 / +1 放大）。
+##
+## 字号写在 _edit 的 font_size 主题覆盖上，所以跟着它走的东西全都会自己跟上：
+## 行号槽、光标、以及运行行白框量行宽时读的那份（见 RunLineFrame）——
+## 白框的宽度是按"光标前那段文字有多宽"算的，字号一变它必须跟着变，
+## 否则运行位置的白框会框错长度。
+func _zoom_code(dir: int) -> void:
+	var cur: int = _edit.get_theme_font_size("font_size")
+	var idx := ZOOM_STEPS.find(cur)
+	if idx < 0:
+		# 当前字号不在档位表里（比如外面改了 FS_BODY），先归到不超过它的最近一档
+		idx = 0
+		for i in ZOOM_STEPS.size():
+			if int(ZOOM_STEPS[i]) <= cur:
+				idx = i
+	var next := clampi(idx + dir, 0, ZOOM_STEPS.size() - 1)
+	if next == idx:
+		return    # 已经在头/尾档，不动也不刷状态行
+	var size: int = ZOOM_STEPS[next]
+	_edit.add_theme_font_size_override("font_size", size)
+	# 补全框是挂在 Main 上的独立控件，不会自己跟着字号变，得显式告诉它。
+	# 字号变了光标在屏幕上的位置也会变，所以紧接着把它贴回新的光标处。
+	if _completion != null:
+		_completion.set_font_size(size)
+		_completion.reposition(_caret_popup_pos())
+	# 状态行是唯一能显示"现在是第几档"的地方（语法状态会在下次敲键时自己刷回来）
+	_set_status("代码字号 %d px（Ctrl+滚轮换档）" % size, Prts.TEXT)
 
 
 ## 打开补全框。auto=true 表示是"边打字边弹"，前缀太短就不打扰。

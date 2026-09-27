@@ -2,13 +2,13 @@
 
 importer="font_data_dynamic"
 type="FontFile"
-uid="uid://daktoljbuwamu"
-path="res://.godot/imported/fusion-pixel-10px-proportional-zh_hans.ttf-297801da6e9bc10391f19acd782b425b.fontdata"
+uid="uid://dw1mfdkjs7bg3"
+path="res://.godot/imported/SourceHanSansCN-VF.ttf-2a2abaf34092bbd498659ee219c1a767.fontdata"
 
 [deps]
 
-source_file="res://assets/font/fusion-pixel-10px-proportional-zh_hans.ttf"
-dest_files=["res://.godot/imported/fusion-pixel-10px-proportional-zh_hans.ttf-297801da6e9bc10391f19acd782b425b.fontdata"]
+source_file="res://assets/font/SourceHanSansCN-VF.ttf"
+dest_files=["res://.godot/imported/SourceHanSansCN-VF.ttf-2a2abaf34092bbd498659ee219c1a767.fontdata"]
 
 [params]
 
@@ -22,8 +22,8 @@ msdf_size=48
 allow_system_fallback=true
 force_autohinter=false
 modulate_color_glyphs=false
-hinting=1
-subpixel_positioning=1
+hinting=3
+subpixel_positioning=4
 keep_rounding_remainders=true
 oversampling=0.0
 Fallbacks=null

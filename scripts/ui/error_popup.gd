@@ -141,7 +141,8 @@ func _build() -> void:
 	_title = Prts.label("", Prts.FS_BODY, C_RED)
 	_title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	head.add_child(_title)
-	head.add_child(Prts.label("SYSTEM ALERT", Prts.FS_TINY, C_RED_DIM))
+	# 署名是系统名而不是泛指的 "SYSTEM"：这弹窗是 PRTS 在报警
+	head.add_child(Prts.label("PRTS ALERT", Prts.FS_TINY, C_RED_DIM))
 	col.add_child(head)
 
 	col.add_child(Prts.rule(C_RED_DIM))

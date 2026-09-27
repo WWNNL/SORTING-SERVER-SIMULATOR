@@ -2,6 +2,10 @@ class_name Prts
 extends RefCounted
 ## PRTS 风格的黑白像素主题。
 ##
+## PRTS 是世界观里那套 AI 数据库系统的名字——玩家是它底下的一个 agent，
+## 分管排序优化单元。这套主题就是它的界面：冷、直角、只有黑白灰。
+## 界面文案里出现 PRTS 的地方都是"系统在说话"（开机横幅、报错弹窗）。
+##
 ## 设计约束（刻意保持严格）：
 ##   · 只用黑、白、灰，没有彩色。层级靠明度、细线和留白拉开。
 ##   · 全部直角，边框 1px，禁用抗锯齿。
@@ -31,20 +35,24 @@ const BAR := Color("#2e2e2e")
 const BAR_SETTLED := Color("#6a6a6a")
 const BAR_HOT := Color("#ffffff")
 
-## 字号只有 12 / 24 / 36 三个合法值。
+## 字号只有 12 / 24 / 36 三个合法值。要拉开层级就靠颜色（DIM / TEXT / TEXT_HI /
+## WHITE）和字间距（spaced_font），不要再动字号——动了就回到糊的状态。
 ##
-## Fusion Pixel 12px 的字形画在 12px 网格上，在设计尺寸下轮廓点坐标全是整数。
-## 只有整数倍字号能保住这个对齐；非整数倍会把轮廓点推到半像素上，而抗锯齿
-## 是关的，于是笔画宽度在 1px / 2px 之间跳，密集汉字里细笔画甚至会整条消失。
-## 实测（font_get_glyph_contours，"国"字 32 个轮廓点里偏离整数网格的点数）：
+## 这不是审美选择，是点阵字体的硬约束：Fusion Pixel 12px 的字形**画在 12px 网格上**，
+## 设计尺寸下轮廓点坐标全是整数，每个笔画正好落在像素格上。只有整数倍字号能保住
+## 这个对齐；非整数倍会把轮廓点推到半像素上，而抗锯齿是关的，于是笔画宽度在
+## 1px / 2px 之间跳，密集汉字里细笔画甚至会整条消失。实测（font_get_glyph_contours，
+## "国"字 32 个轮廓点里偏离整数网格的点数）：
 ##     10px → 27   11px → 27   12px → 0    14px → 25   16px → 25
 ##     18px → 24   20px → 25   24px → 0    30px → 24   36px → 0
-## 所以小字号统一用 12。要拉开层级就靠颜色（DIM / TEXT / TEXT_HI / WHITE）
-## 和字间距（spaced_font），不要再动字号——动了就回到糊的状态。
 ##
-## 换字号等于换字体：10px 网格的字体只在 10/20/30 上对齐，12px 网格的只在
-## 12/24/36 上对齐。两者不能共用同一套字号常量，PIXEL_FONT_PATH 换哪个，
-## 这里的三个数字就要跟着换。
+## 换字号等于换字体：10px 网格的变体只在 10/20/30 上对齐，12px 网格的只在
+## 12/24/36 上对齐。两者不能共用同一套字号常量，UI_FONT_PATH 换哪个，
+## 这里三个数字就要跟着换。
+##
+## 12 是**布局基准**：按钮宽度、顶栏指标格、控制行的余量全是按它量出来的，
+## 改它等于把界面重排一遍（每改一次都要重跑一遍余量测量）。
+## 24 / 36 只用在狗狗币那种大号读数上。
 const FS_TINY := 12
 const FS_SMALL := 12
 const FS_BODY := 12
@@ -54,37 +62,95 @@ const FS_HUGE := 36
 
 # ---------------------------------------------------------------- 字体
 
-## 项目自带的像素字体。Fusion Pixel 12px，中文点阵，专为 12px 设计，
-## 在 12 / 24 / 36 这种整数倍字号下最锐利。
-## 同族的 10px 变体还在 assets/font 下（旧版用的），但 12px 网格的字号常量
-## 喂给它只会全糊，不要混用。
-const PIXEL_FONT_PATH := "res://assets/font/fusion-pixel-12px-proportional-zh_hans.ttf"
+## 界面字体：Fusion Pixel 12px，中文点阵字体，**随项目分发**（assets/font 下）。
+##
+## 为什么是点阵字体而不是轮廓字体——两条路都实测过，结论是硬约束：
+## 汉字等宽，笔画数不影响格子大小，所以复杂字能不能看清，只取决于"字面高度够不够
+## 把笔画和间隙分开"。实测「重」有 7 条横画 + 6 道间隙 = 13 个特征要各占至少
+## 1 像素，而它的字面高度是：
+##     12px → 10.8px   13 > 10.8，分不开
+##     14px → 12.6px   13 > 12.6，分不开（间隙最深只能掉到峰值的 30%，肉眼就是没间隙）
+##     16px → 15.0px   13 < 15，刚够，但上半部仍会粘连（间隙掉到 12%）
+##     20px → 18.0px   到这里才真正笔画分明
+## 轮廓字体要 18~20px 才能解开「重」，而这个界面是 12~16px 的密度，塞不下。
+## 点阵字体绕开了这个不等式：字形是**人手按像素画的**，哪个像素亮由设计者决定，
+## 12px 下「重」的横画本来就是分开的。代价是只有 12/24/36 三个合法字号
+## （见上面 FS_BODY 的说明），笔画也比轮廓字体粗、方。
+##
+## 用自带文件而不是系统字体：系统上装没装、装的是哪个版本都不由我们说了算，
+## 而字宽会直接影响布局（下面一堆固定宽度都是按它量出来的）。
+##
+## 试过又换掉的字体（记在这里，免得下次再走一遍）：
+##   · 思源黑体（Source Han Sans）可变字体——平滑、大字号好看，但小字号解不开复杂字。
+##     文件还留着，见下面的 SANS_FONT_PATH。
+##   · 代码单独用等宽字体（Cascadia Mono + 宋体）——列对齐更好，但 12px 下宋体的
+##     中文注释开着抗锯齿会发虚。系统字体，不用留文件。
+##   · 同族的 Fusion Pixel 10px 变体（旧版用的）——已经删掉了，它只在 10/20/30
+##     上对齐，和现在的 12px 网格不通用。
+const UI_FONT_PATH := "res://assets/font/fusion-pixel-12px-proportional-zh_hans.ttf"
+## 上面那套轮廓字体，想换回去就让 body_font() 去 load 它（记得连 FS_ 常量一起换）
+const SANS_FONT_PATH := "res://assets/font/SourceHanSansCN-VF.ttf"
+
+## 点阵字体缺字时兜底用的系统字体（生僻字、玩家自己起的怪名字）。
+## 也要关抗锯齿：兜底的那几个字要是平滑的，和周围一圈点阵字格格不入。
+const UI_FONT_FAMILIES := ["SimSun", "宋体", "NSimSun", "Microsoft YaHei", "sans-serif"]
+
+static var _body_font: Font = null
 
 
 static func make_font() -> Font:
-	var f: Font = load(PIXEL_FONT_PATH)
-	if f is FontFile:
-		var ff: FontFile = f
-		# 像素字体必须关抗锯齿、关亚像素定位，否则每个笔画边缘都会糊出一圈灰
-		ff.antialiasing = TextServer.FONT_ANTIALIASING_NONE
-		ff.subpixel_positioning = TextServer.SUBPIXEL_POSITIONING_DISABLED
-		ff.hinting = TextServer.HINTING_NONE
-		ff.force_autohinter = false
-		ff.multichannel_signed_distance_field = false
-		return ff
+	return body_font()
 
-	# 保底：万一资源被挪走，退回系统宋体（同样是点阵观感）
-	var sf := SystemFont.new()
-	sf.font_names = PackedStringArray([
-		"SimSun", "宋体", "NSimSun", "MS Gothic", "Microsoft YaHei", "sans-serif",
-	])
-	sf.antialiasing = TextServer.FONT_ANTIALIASING_NONE
-	sf.subpixel_positioning = TextServer.SUBPIXEL_POSITIONING_DISABLED
-	sf.hinting = TextServer.HINTING_NORMAL
-	sf.force_autohinter = true
-	sf.allow_system_fallback = true
-	sf.multichannel_signed_distance_field = false
-	return sf
+
+## 正文字体（主题默认字体）。
+static func body_font() -> Font:
+	if _body_font == null:
+		_body_font = _pixel_font()
+	return _body_font
+
+
+## 大号读数用的字体。点阵字体只有一套字形，没有第二档字重可换，所以就是正文那份。
+## 留着这个函数是为了让调用方不用关心界面字体到底有几档。
+static func display_font() -> Font:
+	return body_font()
+
+
+## 界面字：Fusion Pixel 12px 点阵字体。
+##
+## 渲染设置全是"别动它"：
+##   · 抗锯齿关——点阵字体的笔画边缘本来就是硬的，开抗锯齿会在每个笔画周围
+##     糊出一圈灰，那圈灰正是"发虚"的来源。
+##   · hinting 关——hinting 是给轮廓字体做网格对齐用的，对已经画在网格上的
+##     点阵字形只会帮倒忙。
+##   · 亚像素定位关——每个字形都从整像素开始画，字距不会有半像素的抖动。
+##
+## oversampling 留 0（= 跟随视口）：这个字体在 12/24/36 上都是整数网格，所以
+## 窗口按整数倍放大时，让引擎按 24/36 光栅化仍然是锐利的点阵；反过来，在这里
+## 写死一个非整数倍、或者让画布去拉伸一份 12px 的光栅，边缘就会糊。
+## 这也是**不能**沿用轮廓字体那套超采样（FONT_OVERSAMPLING）的原因：
+## 2 倍超采样等于对点阵字形做 2×2 均值滤波，正好把硬边缘抹平。
+static func _pixel_font() -> Font:
+	# 抗锯齿 / 亚像素定位 / hinting 是 **FontFile** 上的属性，FontVariation 没有这几个
+	# （踩过一次：设在 FontVariation 上会报 "Invalid assignment of property 'antialiasing'"，
+	# 结果是字体整个变 null、界面上所有字消失）。所以设在 base 上，
+	# load 带缓存，两次拿到的是同一个对象。
+	var base: FontFile = load(UI_FONT_PATH)
+	base.antialiasing = TextServer.FONT_ANTIALIASING_NONE
+	base.subpixel_positioning = TextServer.SUBPIXEL_POSITIONING_DISABLED
+	base.hinting = TextServer.HINTING_NONE
+	base.force_autohinter = false
+	base.multichannel_signed_distance_field = false
+	base.oversampling = 0.0
+	# 缺字（生僻字、玩家自己起的怪名字）交给系统字体，别显示成方框
+	var fb := SystemFont.new()
+	fb.font_names = PackedStringArray(UI_FONT_FAMILIES)
+	fb.antialiasing = TextServer.FONT_ANTIALIASING_NONE
+	fb.subpixel_positioning = TextServer.SUBPIXEL_POSITIONING_DISABLED
+	fb.hinting = TextServer.HINTING_NORMAL
+	fb.force_autohinter = true
+	fb.multichannel_signed_distance_field = false
+	base.fallbacks = [fb]
+	return base
 
 
 ## 带字间距的变体，用于小节标题那类"拉开一点"的文字。
@@ -345,6 +411,9 @@ static func label(text: String, size := FS_BODY, color := TEXT) -> Label:
 	l.text = text
 	l.add_theme_font_size_override("font_size", size)
 	l.add_theme_color_override("font_color", color)
+	# 这里原来会给大号读数换一档更细的字重（轮廓字体时代的事）。点阵字体只有
+	# 一套字形，换不了，所以不再挂 font 覆盖——少一次 add_theme_font_override
+	# 就少一次 NOTIFICATION_THEME_CHANGED 重解析（见 set_color_cached 的说明）。
 	return l
 
 

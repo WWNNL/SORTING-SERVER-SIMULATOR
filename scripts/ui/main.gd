@@ -21,6 +21,11 @@ const RAM_HEADROOM_VARS := 8
 const MAX_STEP_DELTA := 0.05
 ## 单帧指令数硬上限（按 MAX_STEP_DELTA 和最高 CPU 档算，留一倍余量）
 const MAX_STEPS_PER_FRAME := 13000
+## 循环模式下，每局结算完先停这么久再开下一局。
+## 不停的话，高配机器上一局不到一帧就跑完——柱子刚排好就被下一局刷掉，
+## 玩家只看到画面一直在抖，看不到"这一局排成什么样了"。0.3 秒是"看得清、
+## 又不拖沓"的量；这一停不计电费（电费只在运行中扣）。
+const LOOP_PAUSE := 0.3
 ## 标签页：按住后移动超过这么多像素才算拖动，否则算点击。
 ## 单点一下也会走"按下"这条路，没有这个门槛就会看到卡片闪一下。
 const TAB_DRAG_THRESHOLD := 6.0
@@ -61,6 +66,12 @@ var _btn_run: Button
 var _btn_pause: Button
 var _btn_step: Button
 var _btn_stop: Button
+var _btn_loop: Button
+## 循环模式：每局结算完自动开下一局（刷收益、连刷旧关卡用）。
+## 刻意不进存档——"下次开游戏自动跑起来"是个惊吓，不是功能。
+var _looping := false
+## 循环的两局之间还要等多少秒（> 0 = 正在等，见 LOOP_PAUSE）
+var _loop_wait := 0.0
 var _step_pending := false
 var _stat := {}
 var _stage_title: Label
@@ -107,7 +118,9 @@ func _ready() -> void:
 	_refresh_stage()
 	_update_file_label()
 
-	log_line("虚拟服务器已就绪。", "sys")
+	# 开机横幅带系统署名——控制台是 PRTS 在说话。用冒号而不是间隔号：
+	# log_line 自己会在行首加一个"· "，再写一个间隔号就成了"· PRTS · "。
+	log_line("PRTS：虚拟服务器已就绪。", "sys")
 	if Game.power_ok():
 		log_line("供电正常：整机 %dW / 电源 %dW。运行期间按 %dW 实时计电费。"
 			% [Game.total_draw(), Game.psu_watts(), Game.total_draw()], "sys")
@@ -197,8 +210,12 @@ func _build_topbar() -> Control:
 	chips.add_theme_constant_override("separation", 0)
 	_chip["power"] = _make_chip("供电", "0W / 0W", 108)
 	# 处理器单独一格：滑条可以在额定速度以下调速，不显示出来玩家不知道自己在跑多快。
-	# 数值给 150px 固定宽（最长那句"128,700 / 130,000 步 / 秒"是 146px），
+	# 数值给 150px 固定宽（12px 字号下最长那句"128,700 / 130,000 步 / 秒"实测 146px），
 	# 这样调速时芯片宽度不变、顶栏不会跟着挪。
+	#
+	# 这个数**跟着字号走**，改 Prts 的 FS_BODY 就要重量这一格：轮廓字体那阵子
+	# 字号 12 → 14 → 16，这格跟着从 150 一路涨到 185。换回点阵字体、字号回到 12
+	# 之后又量回 146，所以写 150。留太多余量不会裁字，但顶栏会多出一段空档。
 	_chip["cpu"] = _make_chip("处理器", "0 步 / 秒", 118, 150.0)
 	_chip["ram"] = _make_chip("内存", "0 / 0 B", 108)
 	_chip["disk"] = _make_chip("硬盘", "0 / 0 B", 108)
@@ -215,7 +232,10 @@ func _build_topbar() -> Control:
 	var t1 := Prts.label("能工智人 · 数据库", Prts.FS_BODY, Prts.TEXT_HI)
 	t1.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	title.add_child(t1)
-	var sub := Prts.dim_label("SORTING SERVER SIMULATOR")
+	# 第二行是系统署名 + 作品副标题。PRTS 是世界观里那套 AI 数据库系统的名字，
+	# SORTING SERVER SIMULATOR 是这款游戏的英文说明——两者不是一回事，
+	# 所以用间隔号并排，而不是互相替换。
+	var sub := Prts.dim_label("PRTS · SORTING SERVER SIMULATOR")
 	sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	title.add_child(sub)
 	row.add_child(Prts.pad(title, 16, 0))
@@ -224,8 +244,8 @@ func _build_topbar() -> Control:
 
 
 ## 顶栏指标格。value_w 是数值那行的**固定**宽度（0 = 随文本）：
-## 处理器那格会写"当前 / 额定"，最长 146px；不固定的话芯片宽度会随文本变
-## （实测 146 → 168px），一拖滑条整条顶栏就跟着挪。
+## 处理器那格会写"当前 / 额定"，12px 正文下最长 146px；不固定的话芯片宽度会随文本变，
+## 一拖滑条整条顶栏就跟着挪。
 func _make_chip(caption: String, value: String, width := 112, value_w := 0.0) -> Dictionary:
 	var box := VBoxContainer.new()
 	box.add_theme_constant_override("separation", 1)
@@ -306,21 +326,32 @@ func _build_controls() -> Control:
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 6)
 
-	_btn_run = Prts.button("> 运行", 96)
+	# 四个走带按钮给 88px：14px 字号下"|| 暂停"这类最长 64px，够用；
+	# 96px 是 12px 时代的尺寸，字号提到 14 之后控制行被挤到零余量，收窄这里换回空间。
+	_btn_run = Prts.button("> 运行", 88)
 	_btn_run.pressed.connect(_on_run_pressed)
 	row.add_child(_btn_run)
 
-	_btn_pause = Prts.button("|| 暂停", 96)
+	_btn_pause = Prts.button("|| 暂停", 88)
 	_btn_pause.pressed.connect(_on_pause_pressed)
 	row.add_child(_btn_pause)
 
-	_btn_step = Prts.button(">| 单步", 96)
+	_btn_step = Prts.button(">| 单步", 88)
 	_btn_step.pressed.connect(_on_step_pressed)
 	row.add_child(_btn_step)
 
-	_btn_stop = Prts.button("X 停止", 96)
+	_btn_stop = Prts.button("X 停止", 88)
 	_btn_stop.pressed.connect(_on_stop_pressed)
 	row.add_child(_btn_stop)
+
+	# 循环。做成 toggle 按钮而不是"循环：开/关"那种写法：按下时整块反白，
+	# 正是这套主题里"当前项"的既有表达，还省下 36px —— 这一行已经很挤了
+	# （实测可用 895px、内容 817px，余量全在文件标签后面那截空白里）。
+	_btn_loop = Prts.button("循环", 56)
+	_btn_loop.toggle_mode = true
+	_btn_loop.tooltip_text = "开启后，每局结束自动开下一局"
+	_btn_loop.toggled.connect(_on_loop_toggled)
+	row.add_child(_btn_loop)
 
 	row.add_child(Prts.vline())
 
@@ -806,6 +837,12 @@ func _on_pause_pressed() -> void:
 
 
 func _on_stop_pressed() -> void:
+	# 停止就是"停下来"：循环也一起关。留着它的话，玩家按下停止、下一局又自己
+	# 跑起来，会以为自己没停成功。放在 _vm 判空之前：循环开着但没东西在跑时，
+	# 这个按钮也得能把它关掉。
+	if _looping:
+		set_looping(false)
+		log_line("循环已关闭。", "sys")
 	if _vm == null:
 		return
 	if _state == ST_RUNNING or _state == ST_PAUSED:
@@ -815,9 +852,65 @@ func _on_stop_pressed() -> void:
 	_emit_state()
 
 
+## 循环开关。玩家点它，或者程序自己关（出错、装配不起来、停止、单步）。
+func _on_loop_toggled(on: bool) -> void:
+	_looping = on
+	log_line("循环已开启：每局结束后自动开下一局。" if on else "循环已关闭。", "sys")
+	# 待机时点开就直接开跑，省得再点一次「运行」——循环模式下"开着却没在跑"
+	# 才是更奇怪的状态。装不起来（语法错、内存/硬盘/供电不够）时
+	# _prepare_run 会把它关回去，并说明原因。
+	if on and not run_active():
+		_on_run_pressed()
+
+
+## 程序化地开关循环，按钮跟着同步（不触发 toggled，免得和上面的日志重复）。
+func set_looping(on: bool) -> void:
+	_looping = on
+	# 关掉循环 = 连"还没开的那一局"一起取消，否则刚按下停止又自己跑起来了
+	_loop_wait = 0.0
+	if _btn_loop != null and _btn_loop.button_pressed != on:
+		_btn_loop.set_pressed_no_signal(on)
+
+
+## 循环模式下，这一局结算完就该开下一局——但先等 LOOP_PAUSE 秒，
+## 让玩家看清这一局的结果（排好的柱子、达标数字），再由 _process 去开。
+##
+## 出错（包括"跑完了但没排好序"）就自动关掉：代码有问题时，循环只会把同一条报错
+## 和报错弹窗一遍遍刷满屏幕，玩家反而没法静下来看代码。
+## 单步和手动停止也各自会把循环关掉——那是玩家在手动接管，不该被自动运行顶回来。
+func _loop_next() -> void:
+	if not _looping:
+		return
+	if _state == ST_ERROR:
+		set_looping(false)
+		log_line("循环已关闭：这一局出错了，先改好代码再开。", "warn")
+		return
+	if _state != ST_DONE:
+		return
+	_loop_wait = LOOP_PAUSE
+
+
+## 间隔走完，真正开下一局。
+##
+## 两个前置判断是防"等着的这 0.3 秒里情况变了"：玩家可能已经手动运行、
+## 单步或停止了（状态就不是 ST_DONE 了），那这一局就不该再开——否则会把
+## 玩家刚开的运行顶掉。
+func _loop_start_next() -> void:
+	if not _looping or _state != ST_DONE:
+		return
+	if not _prepare_run():
+		return    # 装不起来时 _prepare_run 已经把它关掉了
+	_state = ST_RUNNING
+	_emit_state()
+
+
 ## 单步：没有题目（或上一局已结束）就先生成一局并停住，之后每次只推进一条指令。
 ## 和「运行」同一条规矩：编辑器换到别的文件时，单步也从新文件重新开局。
 func _on_step_pressed() -> void:
+	# 单步是"我要一条条看"，这时候还挂着自动运行只会互相打架
+	if _looping:
+		set_looping(false)
+		log_line("循环已关闭：单步是手动推进。", "sys")
 	if run_active() and not is_running_file_current():
 		interrupt_run("换用 %s" % current_file_name())
 	if _vm == null or _state == ST_DONE or _state == ST_ERROR:
@@ -861,8 +954,19 @@ func _clear_task() -> void:
 	_update_file_label()
 
 
-## 装配一次运行。任何一项资源不满足都在这里拦下来，并给出可执行的建议。
+## 装配一次运行。装不起来就顺手把循环关掉——循环开着却没有东西在跑，是个
+## 看不出所以然的死状态（按钮亮着、什么都不发生）。失败原因由里面那条报错说。
 func _prepare_run() -> bool:
+	if _prepare_run_inner():
+		return true
+	if _looping:
+		set_looping(false)
+		log_line("循环已关闭：这一局装不起来，原因见上面那条。", "warn")
+	return false
+
+
+## 真正装配的那一层。任何一项资源不满足都在这里拦下来，并给出可执行的建议。
+func _prepare_run_inner() -> bool:
 	var code := current_code()
 	if code.strip_edges().is_empty():
 		log_line("代码是空的。先写一个 sort 函数。", "error")
@@ -1013,6 +1117,13 @@ func _process(delta: float) -> void:
 		return
 
 	if _state != ST_RUNNING:
+		# 循环的两局之间：这一局已经结算完，先停一下再开下一局（见 LOOP_PAUSE）。
+		# 放在"没在跑"这一支里而不是前面：跑着的时候绝不能碰它，否则会把
+		# 正在跑的那一局冻住半秒。
+		if _loop_wait > 0.0:
+			_loop_wait = maxf(0.0, _loop_wait - delta)
+			if _loop_wait == 0.0:
+				_loop_start_next()
 		return
 
 	# 截断异常长帧，避免指令暴冲（见 MAX_STEP_DELTA 的说明）
@@ -1126,6 +1237,8 @@ func _finish_run() -> void:
 		_tab_status.refresh()
 	if _tab_stages != null:
 		_tab_stages.refresh()
+	# 循环放在最后：先把这一局的成绩、结算、阶段变化都摆出来，再开下一局
+	_loop_next()
 
 
 func _resolve_success() -> void:

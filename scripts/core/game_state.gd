@@ -15,15 +15,23 @@ signal speed_changed()
 const SAVE_PATH := "user://save.json"
 const ENTRY := "sort"
 
-## 存档里比例的下限（防旧数据/手滑存出负值）。滑条真正的下限是
-## min_cpu_ratio()：定成"恰好还能跑出 1 步/秒"——固定 1% 的话，
-## 升满 C-256 后最低档是 1300 步/秒，根本看不清运行轨迹。
-const MIN_CPU_RATIO := 0.01
-
 ## CPU 滑条的最低比例 = 1 / 额定速度：任何档位的滑条底部都是 1 步/秒。
 ## cpu_speed 有 1 的下限兜底，比这更低的比例没有意义。
+##
+## 它同时也是**存档里比例的下限**。这个下限跟着硬件走，所以任何固定值都当不了下限：
+## 早先存档用的是 0.01，而升满 C-256 后滑条最左是 7.7e-6，于是"逐行档"存进盘
+## 再读回来会被抬到 1%（1300 步/秒），玩家重新开游戏会以为档位丢了。
 func min_cpu_ratio() -> float:
 	return 1.0 / maxf(float(cpu_rate()), 1.0)
+
+
+## 把存档里的比例夹回合法范围。比下限还小的值（0、负值、手改过的存档）
+## 一律抬到下限——那正好等于"滑条最左"，语义上还是玩家存的那个档位。
+##
+## **必须在硬件等级恢复之后调用**：下限依赖 CPU 档位，硬件还没读出来时
+## 算出来的是默认档（C-01）的下限，逐行档会被抬到 1/60。
+static func clamp_saved_ratio(r: float, rated: int) -> float:
+	return clampf(r, 1.0 / maxf(float(rated), 1.0), 1.0)
 
 
 ## 滑条最低档 = "逐行"：最低速度 1 行/秒——每过一秒把"当前这一行"推进完，
@@ -518,7 +526,8 @@ func load_game() -> void:
 	current_file = int(d.get("current_file", 0))
 	# 老存档没有这两个字段：默认"跟着进度走 + 跑满速度"
 	stage_sel = clampi(int(d.get("stage_sel", -1)), -1, frontier_index())
-	cpu_ratio = clampf(float(d.get("cpu_ratio", 1.0)), MIN_CPU_RATIO, 1.0)
+	# cpu_ratio 刻意不在这里夹：下限依赖 CPU 档位，得等下面的 tiers 读完再算，
+	# 否则逐行档会被默认档（C-01）的下限抬走。见 clamp_saved_ratio。
 	tab_order = []
 	if d.get("tab_order") is Array:
 		for n in (d["tab_order"] as Array):
@@ -537,6 +546,8 @@ func load_game() -> void:
 	if d.get("tiers") is Dictionary:
 		for p in ServerSpec.PARTS:
 			tiers[p] = clampi(int((d["tiers"] as Dictionary).get(p, 0)), 0, ServerSpec.max_tier(p))
+	# 硬件恢复完了，现在夹比例才是对的（老存档没有这个字段 → 跑满速度）
+	cpu_ratio = clamp_saved_ratio(float(d.get("cpu_ratio", 1.0)), cpu_rate())
 	if d.get("stats") is Dictionary:
 		for k in stats:
 			stats[k] = int((d["stats"] as Dictionary).get(k, stats[k]))

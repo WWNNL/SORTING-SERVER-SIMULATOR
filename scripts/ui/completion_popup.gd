@@ -10,13 +10,19 @@ extends PanelContainer
 ## 它是 Main 的直接子节点，靠 z_index 压在最上层。
 
 const MAX_ROWS := 9
+## 行高和名字列宽都是按 12px 正文量的。字号变了按比例换算，见 _px()。
 const ROW_HEIGHT := 19
+const NAME_WIDTH := 96
 
 var _box: VBoxContainer
 var _rows: Array = []          ## [{root, name_label}]
 var _items: Array = []
 var _sel := 0
 var _open := false
+## 当前字号。默认跟正文，代码区 Ctrl+滚轮放大时由 TabEditor 通知改（见 set_font_size）
+var _font_size := Prts.FS_SMALL
+## open() 传进来的那个父控件，重新贴位置时要用（见 _clamp）
+var _parent: Control
 
 
 func _init() -> void:
@@ -55,9 +61,42 @@ func selected_index() -> int:
 	return _sel
 
 
+## 12px 下量的尺寸，换算到当前字号
+func _px(v: float) -> int:
+	return int(round(v * float(_font_size) / float(Prts.FS_SMALL)))
+
+
+## 跟着代码区的缩放走。
+##
+## 补全框挂在 Main 上（靠 z_index 压层），不是编辑器的子节点，所以它**不会**
+## 自己继承编辑器的字号——代码放大到 24px 而候选还停在 12px 的话，弹框会小得
+## 和旁边对不上。由 TabEditor 在换档时显式通知（见 _zoom_code）。
+func set_font_size(px: int) -> void:
+	if px == _font_size:
+		return
+	_font_size = px
+	if not _open:
+		return
+	# 正开着就重建一次：候选行是按字号铺的，尺寸会变，所以要重算尺寸并重新夹回窗口内。
+	# 位置本身由调用方用 reposition() 贴到新光标处——字号变了光标在屏幕上的位置也会变。
+	_rebuild()
+	var m := get_combined_minimum_size()
+	size = Vector2(maxf(m.x, 150.0), m.y)
+	_clamp(_parent)
+
+
+## 贴到新的锚点（全局/画布坐标）。缩放后光标位置会变，弹框要跟着挪。
+func reposition(at: Vector2) -> void:
+	if not _open:
+		return
+	position = at
+	_clamp(_parent)
+
+
 ## 打开并把候选铺出来。at 是全局（画布）坐标。
 func open(items: Array, at: Vector2, parent: Control) -> void:
 	_items = items
+	_parent = parent
 	if _items.is_empty():
 		close()
 		return
@@ -97,26 +136,26 @@ func _rebuild() -> void:
 		var row := HBoxContainer.new()
 		row.add_theme_constant_override("separation", 10)
 
-		var name_label := Prts.label(String(it.get("text", "")), Prts.FS_SMALL,
+		var name_label := Prts.label(String(it.get("text", "")), _font_size,
 			it.get("color", Prts.TEXT_HI))
-		name_label.custom_minimum_size = Vector2(96, ROW_HEIGHT - 4)
+		name_label.custom_minimum_size = Vector2(_px(NAME_WIDTH), _px(ROW_HEIGHT - 4))
 		row.add_child(name_label)
 
-		var hint := Prts.dim_label(String(it.get("hint", "")), Prts.FS_TINY)
+		var hint := Prts.dim_label(String(it.get("hint", "")), _font_size)
 		hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 		hint.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		row.add_child(hint)
 
 		var holder := PanelContainer.new()
 		holder.add_theme_stylebox_override("panel",
-			Prts.flat(Color(0, 0, 0, 0), Color(0, 0, 0, 0), 0, 8, 1))
+			Prts.flat(Color(0, 0, 0, 0), Color(0, 0, 0, 0), 0, _px(8), 1))
 		holder.add_child(row)
 		_box.add_child(holder)
 		_rows.append({"root": holder, "name": name_label})
 
 	if _items.size() > shown:
 		_box.add_child(Prts.dim_label("… 还有 %d 项，继续输入可缩小范围"
-			% (_items.size() - shown), Prts.FS_TINY))
+			% (_items.size() - shown), _font_size))
 
 	_apply_selection()
 
@@ -129,11 +168,11 @@ func _apply_selection() -> void:
 		if i == _sel:
 			# 选中项整条反白，和全局的交互语言保持一致
 			holder.add_theme_stylebox_override("panel",
-				Prts.flat(Prts.WHITE, Prts.WHITE, 0, 8, 1))
+				Prts.flat(Prts.WHITE, Prts.WHITE, 0, _px(8), 1))
 			name_label.add_theme_color_override("font_color", Prts.BLACK)
 		else:
 			holder.add_theme_stylebox_override("panel",
-				Prts.flat(Color(0, 0, 0, 0), Color(0, 0, 0, 0), 0, 8, 1))
+				Prts.flat(Color(0, 0, 0, 0), Color(0, 0, 0, 0), 0, _px(8), 1))
 			name_label.add_theme_color_override("font_color",
 				(_items[i] as Dictionary).get("color", Prts.TEXT_HI))
 
