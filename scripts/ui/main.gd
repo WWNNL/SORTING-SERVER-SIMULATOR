@@ -96,6 +96,8 @@ var _tab_press_pos := Vector2.ZERO
 var _tab_press_index := -1
 ## 拖动时跟着光标走的那张小卡片（见 TabDragGhost）
 var _tab_ghost: TabDragGhost
+## 开机自检动画。播完自己销毁，这里跟着置空（见 BootSequence）。
+var _boot: BootSequence = null
 
 
 func _ready() -> void:
@@ -133,6 +135,17 @@ func _ready() -> void:
 	# 开局不生成题目：数据只在点「运行」时才产生
 	_clear_task()
 	_emit_state()
+
+	# 开机自检动画：压在界面之上播一遍，播完自己销毁（见 BootSequence）。
+	# 放在最后：底下的界面得已经搭好（它就是动画结束后露出来的那一屏），
+	# 上面那几条开机横幅也已经进了控制台——玩家跳过动画时它们就在那儿。
+	_boot = BootSequence.new()
+	_boot.finished.connect(_on_boot_finished)
+	add_child(_boot)
+
+
+func _on_boot_finished() -> void:
+	_boot = null
 
 
 # ================================================================ 界面搭建
@@ -601,6 +614,11 @@ func _popup_error(text: String) -> void:
 ## 报错弹窗当前是否开着（测试与外部查询用）。
 func error_popup() -> ErrorPopup:
 	return _error_popup
+
+
+## 开机动画节点。播完自己销毁，这里会变成 null（测试与调试用）。
+func boot() -> BootSequence:
+	return _boot
 
 
 func get_console() -> Array:
