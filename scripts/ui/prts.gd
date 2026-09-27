@@ -80,6 +80,12 @@ const FS_HUGE := 36
 ## 用自带文件而不是系统字体：系统上装没装、装的是哪个版本都不由我们说了算，
 ## 而字宽会直接影响布局（下面一堆固定宽度都是按它量出来的）。
 ##
+## 两个字体都是 **SIL OFL 1.1** 授权，各自带一份许可证放在同目录，随仓库分发：
+##     fusion-pixel-*.ttf     → FusionPixel-LICENSE.txt
+##     SourceHanSansCN-VF.ttf → SourceHanSans-LICENSE.txt
+## OFL 的条件之一就是"再分发时必须附带版权声明和许可证"，所以那两个 txt
+## **不能删**，字体文件也别挪到 assets/font 外面去。
+##
 ## 试过又换掉的字体（记在这里，免得下次再走一遍）：
 ##   · 思源黑体（Source Han Sans）可变字体——平滑、大字号好看，但小字号解不开复杂字。
 ##     文件还留着，见下面的 SANS_FONT_PATH。
