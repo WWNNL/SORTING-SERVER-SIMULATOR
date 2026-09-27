@@ -1,14 +1,14 @@
 extends SceneTree
-## 登入界面的逻辑体检。headless 运行：
+## 接入屏（登入界面）的逻辑体检。headless 运行：
 ##   godot --headless --path <项目> --script res://tests/test_login.gd
 ##
-## 只测**能测的那一半**：分块几何、相位时长、状态机、文案。
-## 画面（白块拼起来、一块块翻黑、整屏翻白再翻黑）和输入要靠实机看，
-## headless 里既没有绘制也没有窗口。
+## 只测**能测的那一半**：分块几何、相位顺序、计数曲线、状态机。
+## 画面（白屏上那几条游走的虚线、打勾的圈、黑屏的发光波形、整屏翻色）
+## 要靠实机看，headless 里既没有绘制也没有窗口。
 ##
-## 最要命的一条是分块几何：留一条缝、或者两块叠上，底下的主界面就会从缝里
-## 透出来（或叠出一块颜色不对的边）——而这一屏是**铺满整屏**的浮层，
-## 几何错一点就是"画面坏了"，不是"位置偏了"。
+## 最要命的一条是分块几何：五条色带必须**拼满整屏、互不重叠**——留一条缝，
+## 底下的主界面就会从缝里透出来；叠上一条，翻色时会露出一块颜色不对的边。
+## 而这一屏是铺满全屏的浮层，几何错一点就是"画面坏了"，不是"位置偏了"。
 
 var _pass := 0
 var _fail := 0
@@ -19,12 +19,12 @@ const SIZES := [Vector2(1600, 900), Vector2(1600, 936)]
 
 
 func _initialize() -> void:
-	print("=== 能工智人·数据库 / 登入界面测试 ===\n")
+	print("=== 能工智人·数据库 / 接入屏测试 ===\n")
 
-	_test_blocks()
+	_test_bands()
 	_test_phases()
+	_test_count()
 	_test_state_machine()
-	_test_rows()
 
 	print("\n=== 通过 %d / 失败 %d ===" % [_pass, _fail])
 	quit(1 if (_fail > 0 or _pass == 0) else 0)
@@ -32,64 +32,114 @@ func _initialize() -> void:
 
 # ---------------------------------------------------------------- 分块几何
 
-func _test_blocks() -> void:
+func _test_bands() -> void:
 	for sz in SIZES:
-		var bs := LoginScreen.blocks(sz.x, sz.y)
+		var bs := LoginScreen.bands(sz.x, sz.y)
 		var area := 0.0
 		var overlaps := false
 		var out_of_screen := false
+		var full_width := true
 		for i in bs.size():
 			var r: Rect2 = bs[i]
 			area += r.size.x * r.size.y
-			if r.position.x < -0.01 or r.position.y < -0.01 \
-					or r.end.x > sz.x + 0.01 or r.end.y > sz.y + 0.01:
+			if not is_equal_approx(r.position.x, 0.0) or not is_equal_approx(r.size.x, sz.x):
+				full_width = false
+			if r.position.y < -0.01 or r.end.y > sz.y + 0.01:
 				out_of_screen = true
 			for j in range(i + 1, bs.size()):
 				if r.intersects(bs[j]):
 					overlaps = true
-		_test("分块拼满 %d×%d、互不重叠" % [int(sz.x), int(sz.y)],
+		_test("色带拼满 %d×%d、互不重叠" % [int(sz.x), int(sz.y)],
 			bs.size() >= 4 and is_equal_approx(area, sz.x * sz.y)
 				and not overlaps and not out_of_screen,
-			"%d 块，面积 %.0f / %.0f" % [bs.size(), area, sz.x * sz.y])
+			"%d 条，面积 %.0f / %.0f" % [bs.size(), area, sz.x * sz.y])
+		_test("每条都是整宽（翻色要横贯画面）",
+			full_width, "%d 条" % bs.size())
 
-	# 左白块必须是**整条**：它是招牌，被切成两半就不成样子了
-	var b: Rect2 = LoginScreen.blocks(1600.0, 900.0)[0]
-	_test("左白块占满整高",
-		is_equal_approx(b.position.y, 0.0) and is_equal_approx(b.size.y, 900.0)
-			and is_equal_approx(b.position.x, 0.0),
-		"%.0f×%.0f @ (%.0f, %.0f)" % [b.size.x, b.size.y, b.position.x, b.position.y])
+	# 高度不等分：等分看着像测试图，不等分才像排版
+	var hs := {}
+	for r in LoginScreen.bands(1600.0, 900.0):
+		hs[int((r as Rect2).size.y)] = true
+	_test("色带高度不等分", hs.size() >= 3, "%d 种高度" % hs.size())
 
 
-# ---------------------------------------------------------------- 时间轴
+# ---------------------------------------------------------------- 相位
 
 func _test_phases() -> void:
-	_test("出场不到 1.5 秒",
-		LoginScreen.T_INTRO > 0.4 and LoginScreen.T_INTRO < 1.5,
-		"%.2f 秒（要够看清几块色块翻完，又不能让人干等）" % LoginScreen.T_INTRO)
-	_test("退场不到 1.2 秒",
-		LoginScreen.T_OUT > 0.5 and LoginScreen.T_OUT < 1.2,
-		"%.2f 秒" % LoginScreen.T_OUT)
+	_test("白屏元素依次落下",
+		LoginScreen.T_IN < LoginScreen.T_BRAND
+			and LoginScreen.T_BRAND < LoginScreen.T_CENTER
+			and LoginScreen.T_CENTER < LoginScreen.T_PIPS
+			and LoginScreen.T_PIPS < LoginScreen.T_FOOT,
+		"翻块 %.2f → 品牌 %.2f → 中央 %.2f → 方块 %.2f → 页脚 %.2f"
+			% [LoginScreen.T_IN, LoginScreen.T_BRAND, LoginScreen.T_CENTER,
+				LoginScreen.T_PIPS, LoginScreen.T_FOOT])
 
-	# 出场里"整屏全白"的那一瞬间：三块白要全部拼上，才轮到翻黑
-	var last_white := LoginScreen.INTRO_RIGHT_AT + LoginScreen.BLOCK_GAP * 2.0
-	_test("白块拼齐之后才翻黑",
-		last_white < LoginScreen.INTRO_CARVE_AT,
-		"最后一块白 %.2f → 第一块翻黑 %.2f" % [last_white, LoginScreen.INTRO_CARVE_AT])
+	# 计数必须等翻块全部走完：不然最后一条带子还白着，白字的百分比已经画上去了
+	var flip_done := LoginScreen.T_FLIP + LoginScreen.BAND_GAP * float(LoginScreen.BAND_COUNT - 1)
+	_test("计数等翻块全部走完",
+		is_equal_approx(flip_done, LoginScreen.T_FLIP_DONE)
+			and LoginScreen.percent_at(flip_done) == 0,
+		"最后一条翻完 %.2f = 开始计数 %.2f" % [flip_done, LoginScreen.T_FLIP_DONE])
 
-	# 内容要在翻黑之后才出现，否则字会被"翻黑"那一下盖掉又冒出来
-	_test("文字在翻块之后才落下",
-		LoginScreen.INTRO_LEFT_TEXT_AT >= LoginScreen.INTRO_CARVE_AT
-			and LoginScreen.INTRO_ROWS_AT >= LoginScreen.INTRO_CARVE_AT + LoginScreen.BLOCK_GAP * 2.0,
-		"左块文字 %.2f、右栏 %.2f" % [LoginScreen.INTRO_LEFT_TEXT_AT, LoginScreen.INTRO_ROWS_AT])
+	# 条数表和高占比表必须对得上——翻块结束的时刻是从 BAND_COUNT 算的
+	_test("条数与占比表对得上",
+		LoginScreen.bands(1600.0, 900.0).size() == LoginScreen.BAND_COUNT,
+		"bands() %d 条 / BAND_COUNT %d"
+			% [LoginScreen.bands(1600.0, 900.0).size(), LoginScreen.BAND_COUNT])
 
-	# 退场：翻白要全部走完，才轮到停一下、再翻黑
-	var white_done := LoginScreen.OUT_WHITE_AT + LoginScreen.OUT_WHITE_GAP * 3.0
-	var black_start := white_done + LoginScreen.OUT_HOLD
-	_test("翻白走完再翻黑",
-		black_start > white_done and black_start + LoginScreen.OUT_BLACK_GAP * 3.0 < LoginScreen.T_OUT,
-		"翻白到 %.2f、停 %.2f、翻黑到 %.2f、结束 %.2f"
-			% [white_done, LoginScreen.OUT_HOLD, black_start + LoginScreen.OUT_BLACK_GAP * 3.0,
-				LoginScreen.T_OUT])
+	_test("整段（不含等待）不超过 4 秒",
+		LoginScreen.T_FOOT < 1.5 and LoginScreen.dark_total() < 2.6,
+		"白屏 %.2f 秒、黑屏 %.2f 秒" % [LoginScreen.T_FOOT, LoginScreen.dark_total()])
+
+
+# ---------------------------------------------------------------- 计数
+
+func _test_count() -> void:
+	var hold := LoginScreen.T_FLIP_DONE
+	_test("翻块期间百分比是 0",
+		LoginScreen.percent_at(0.0) == 0 and LoginScreen.percent_at(hold) == 0,
+		"t=0 → %d%%，t=%.2f → %d%%" % [LoginScreen.percent_at(0.0), hold,
+			LoginScreen.percent_at(hold)])
+
+	var rising := true
+	var prev := -1
+	for i in 21:
+		var t := hold + LoginScreen.T_COUNT * float(i) / 20.0
+		var p := LoginScreen.percent_at(t)
+		if p < prev:
+			rising = false
+		prev = p
+	_test("计数单调不回头、末端夹在 100",
+		rising and prev == 100 and LoginScreen.percent_at(hold + 99.0) == 100,
+		"t=%.2f → %d%%" % [hold + LoginScreen.T_COUNT,
+			LoginScreen.percent_at(hold + LoginScreen.T_COUNT)])
+
+	var mid := LoginScreen.percent_at(hold + LoginScreen.T_COUNT * 0.5)
+	_test("一半时间走到一半左右",
+		mid >= 45 and mid <= 55, "50%% 时刻 → %d%%" % mid)
+
+	# 四个小方块：从 0 点满到 PIP_COUNT 就停住，不会越点越多
+	_test("方块从 0 点满、点满就停",
+		LoginScreen.pips_at(0.0) == 0
+			and LoginScreen.pips_at(LoginScreen.T_PIPS) == 1
+			and LoginScreen.pips_at(LoginScreen.T_PIPS + LoginScreen.PIP_GAP * 3.0) == 4
+			and LoginScreen.pips_at(LoginScreen.T_PIPS + 99.0) == 4,
+		"t=0 → 0 个，点满 → %d 个，再久 → %d 个"
+			% [LoginScreen.pips_at(LoginScreen.T_PIPS + LoginScreen.PIP_GAP * 3.0),
+				LoginScreen.pips_at(LoginScreen.T_PIPS + 99.0)])
+
+	# 三段状态文案：随百分比换，而且三句都不一样
+	var a := LoginScreen.status_for(0)
+	var b := LoginScreen.status_for(50)
+	var c := LoginScreen.status_for(100)
+	_test("状态文案分三段、互不相同",
+		a != b and b != c and a != c and not a.is_empty(),
+		"%s / %s / %s" % [a, b, c])
+	_test("状态文案跟着百分比切",
+		LoginScreen.status_for(39) == a and LoginScreen.status_for(40) == b
+			and LoginScreen.status_for(79) == b and LoginScreen.status_for(80) == c,
+		"40%% 与 80%% 是分界")
 
 
 # ---------------------------------------------------------------- 状态机
@@ -97,63 +147,41 @@ func _test_phases() -> void:
 func _test_state_machine() -> void:
 	var l: LoginScreen = LoginScreen.new()
 
-	_test("开局是出场相位", l.state() == LoginScreen.ST_INTRO, "state=%d" % l.state())
+	_test("开局是白屏等待", l.state() == LoginScreen.ST_LIGHT, "state=%d" % l.state())
 
-	# 出场没播完时按"登入"不算数——那一下是跳过出场（见 _input），不是登入
+	# 白屏在等玩家：推很久也不该自己往下走
+	l.advance(10.0)
+	_test("白屏一直等，不会自己走掉",
+		l.state() == LoginScreen.ST_LIGHT and not l.is_finished(),
+		"t=%.1f 仍是 state=%d" % [l.elapsed(), l.state()])
+
 	l.login()
-	_test("出场期间登入不生效",
-		l.state() == LoginScreen.ST_INTRO,
-		"state=%d（必须等按钮出现）" % l.state())
+	_test("按键之后进黑屏", l.state() == LoginScreen.ST_DARK, "state=%d" % l.state())
 
-	l.advance(LoginScreen.T_INTRO - 0.01)
-	_test("出场没走完仍是出场",
-		l.state() == LoginScreen.ST_INTRO, "t=%.2f" % l.elapsed())
+	l.advance(LoginScreen.dark_total() - 0.01)
+	_test("黑屏走完前仍在黑屏",
+		l.state() == LoginScreen.ST_DARK, "t=%.2f" % l.elapsed())
 
 	l.advance(0.02)
-	_test("出场走完进就绪",
-		l.state() == LoginScreen.ST_READY, "t=%.2f" % l.elapsed())
-
-	l.login()
-	_test("就绪之后登入切到退场",
-		l.state() == LoginScreen.ST_OUT, "state=%d" % l.state())
+	_test("黑屏走完进收尾（翻纯黑）", l.state() == LoginScreen.ST_OUT, "state=%d" % l.state())
 
 	l.advance(LoginScreen.T_OUT - 0.01)
-	_test("退场走完前仍未结束",
-		not l.is_finished() and l.state() == LoginScreen.ST_OUT, "t=%.2f" % l.elapsed())
+	_test("收尾走完前仍未结束",
+		not l.is_finished(), "t=%.2f" % l.elapsed())
+
+	# 已经进黑屏之后再按只是把计数推到底，不会重来一遍
+	var l2: LoginScreen = LoginScreen.new()
+	l2.advance(1.0)
+	l2.login()
+	l2.advance(0.5)
+	var before := l2.elapsed()
+	l2.login()
+	_test("黑屏期间再按不会重置进度",
+		l2.state() == LoginScreen.ST_DARK and l2.elapsed() >= before,
+		"t=%.2f → %.2f" % [before, l2.elapsed()])
 
 	l.free()
-
-
-# ---------------------------------------------------------------- 文案
-
-func _test_rows() -> void:
-	var rows := LoginScreen.rows_for(0, 0, 11)
-	_test("键值行够撑起右栏", rows.size() >= 4, "%d 行" % rows.size())
-
-	var shaped := true
-	for r in rows:
-		if not (r is Array) or (r as Array).size() != 2:
-			shaped = false
-		elif String((r as Array)[0]).is_empty() or String((r as Array)[1]).is_empty():
-			shaped = false
-	_test("每行都是键 + 值", shaped, "字段齐全")
-
-	var joined := _join(rows)
-	_test("权限一栏写着待确认",
-		joined.contains("待确认"), "登入前不该自称已授权")
-
-	var big := LoginScreen.rows_for(1234, 10, 11)
-	_test("运行次数按千分位写",
-		_join(big).contains("1,234 次"), "1234 → 1,234 次")
-	_test("进度写成 已通过 x / y 关",
-		_join(big).contains("10 / 11 关"), "10 / 11 关")
-
-
-func _join(rows: Array) -> String:
-	var parts := PackedStringArray()
-	for r in rows:
-		parts.append("%s %s" % [String((r as Array)[0]), String((r as Array)[1])])
-	return " | ".join(parts)
+	l2.free()
 
 
 func _test(name: String, ok: bool, detail: String) -> void:
