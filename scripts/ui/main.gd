@@ -108,6 +108,9 @@ func _ready() -> void:
 	add_child(_audio)
 
 	_build()
+	# 报错弹窗的警报音跟着「音效」开关走。开关状态在这个会话里一直有效，
+	# 所以开局这里同步一次、之后每次切换再同步（见 _on_audio_toggled）。
+	_error_popup.sound_enabled = _audio.enabled
 
 	Game.coins_changed.connect(_on_coins_changed)
 	Game.tiers_changed.connect(_refresh_hardware)
@@ -394,6 +397,8 @@ func _on_audio_toggled() -> void:
 	if _audio == null:
 		return
 	_audio.set_enabled(not _audio.enabled)
+	if _error_popup != null:
+		_error_popup.sound_enabled = _audio.enabled
 	_btn_audio.text = "音效：开" if _audio.enabled else "音效：关"
 	_btn_audio.add_theme_color_override("font_color",
 		Prts.TEXT if _audio.enabled else Prts.DIM)

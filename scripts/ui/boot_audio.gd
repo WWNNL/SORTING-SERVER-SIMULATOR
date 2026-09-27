@@ -9,8 +9,8 @@ extends Node
 ##          它一直在，音高一直在涨，玩家不会注意它，但关掉会立刻觉得空。
 ##   tick   每行自检落字的一声嗒。音量刻意小（-14dB）：十几声连着来，
 ##          响一点就从"机器在跑"变成"有人在敲键盘"。
-##   buzz   警示拍的双音蜂鸣。两个音只差 14Hz，靠拍频制造那种"灯管/蜂鸣器"的
-##          粗糙感，而不是干净的和声。
+##   buzz   警示拍的双音蜂鸣。波形不在这个文件里——报错弹窗也要响同一个声音，
+##          所以它被抽成了 AlertTone，两处共用。
 ##   thump  标题砸下时的闷响：频率从 90Hz 滑到 35Hz，尾巴拖长，
 ##          是整段里最重的一下。
 ##   cut    收束时的下滑音（老电视关机那一声）。跳过时也用它收尾。
@@ -22,9 +22,9 @@ const RATE := 22050
 
 ## 各声音的基准音量（dB）。这里定平衡，波形里只定形状——
 ## 调"哪个响一点"改这几个数就行，不用回头改采样。
+## （buzz 不在这张表里：它的音量和波形一起放在 AlertTone，两处共用。）
 const HUM_DB := -7.0
 const TICK_DB := -14.0
-const BUZZ_DB := -6.0
 const THUMP_DB := -4.0
 const CUT_DB := -7.0
 
@@ -45,7 +45,7 @@ var _fade := -1.0
 func _ready() -> void:
 	_hum = _player(_hum_wav(), HUM_DB)
 	_tick = _player(_tick_wav(), TICK_DB)
-	_buzz = _player(_buzz_wav(), BUZZ_DB)
+	_buzz = _player(AlertTone.stream(), AlertTone.VOLUME_DB)
 	_thump = _player(_thump_wav(), THUMP_DB)
 	_cut = _player(_cut_wav(), CUT_DB)
 	set_process(false)
@@ -192,29 +192,6 @@ func _tick_wav() -> AudioStreamWAV:
 	return _wav(data)
 
 
-## 警示蜂鸣：233Hz 与 247Hz 两个方波相加（拍频 14Hz），再叠一层 11Hz 的硬断续。
-## 方波而不是正弦：蜂鸣器/警报器就是方波的音色，正弦太"干净"，
-## 在这套冷硬的黑白界面里会显得温柔。
-func _buzz_wav() -> AudioStreamWAV:
-	var dur := 0.55
-	var count := int(RATE * dur)
-	var data := PackedByteArray()
-	data.resize(count * 2)
-
-	for i in count:
-		var t := float(i) / float(RATE)
-		var env := 1.0
-		if t < 0.006:
-			env = t / 0.006
-		elif t > dur - 0.12:
-			env = (dur - t) / 0.12
-		var chop := 1.0 if sin(TAU * 11.0 * t) > 0.0 else 0.55
-		var sq := _square(TAU * 233.0 * t) * 0.5 + _square(TAU * 247.0 * t) * 0.5
-		var s := sq * chop * env * 0.42
-		data.encode_s16(i * 2, int(clampf(s, -1.0, 1.0) * 32767.0))
-	return _wav(data)
-
-
 ## 砸标题的闷响：90Hz 滑到 35Hz 的正弦，指数衰减，前 15ms 叠一小段噪声当"撞击"。
 func _thump_wav() -> AudioStreamWAV:
 	var dur := 0.55
@@ -256,10 +233,6 @@ func _cut_wav() -> AudioStreamWAV:
 		var s := sin(ph) * env * 0.5
 		data.encode_s16(i * 2, int(clampf(s, -1.0, 1.0) * 32767.0))
 	return _wav(data)
-
-
-static func _square(ph: float) -> float:
-	return 1.0 if sin(ph) > 0.0 else -1.0
 
 
 ## 16 位单声道。和 SortAudio._make_tone 用的是同一套参数。

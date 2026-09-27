@@ -12,6 +12,9 @@ extends Control
 ## 亮度曲线是手写的关键帧数组，不挂 Tween：这个项目的动画都是这么写的
 ## （见 viz_view 的飞行元素、RunLineFrame 的平滑滑动），参数一眼看得全。
 ## 不播动画时 set_process(false)，一帧都不多花。
+##
+## 亮起来的同时还响一声警报（AlertTone）——和开机自检的警示拍是同一个声音。
+## 玩家在开机时听过一次"出事了"，这里再听到一次才认得出是同一个警报。
 
 # ---------------------------------------------------------------- 配色
 ## 全界面唯一的彩色，只给错误用
@@ -53,10 +56,16 @@ const FLICKER_TIME := 0.40
 
 enum { ST_HIDDEN, ST_IN, ST_SHOWN, ST_OUT }
 
+## 音效开关，跟着主界面的「音效」按钮走（Main 在切换时同步过来）。
+## 那个按钮在玩家眼里就是"这个游戏出不出声"，报错当然也算——
+## 关掉音效还挨一声警报，会让人觉得开关是坏的。
+var sound_enabled := true
+
 var _panel: PanelContainer
 var _frame: PrtsFrame
 var _title: Label
 var _body: Label
+var _alarm: AudioStreamPlayer
 var _state := ST_HIDDEN
 var _t := 0.0
 ## 居中位置（不含动画偏移）
@@ -79,6 +88,13 @@ func _ready() -> void:
 	set_anchors_preset(Control.PRESET_FULL_RECT)
 	resized.connect(_layout)
 	_build()
+	# 警报音。波形是共用的（AlertTone），这里只负责响：
+	# 一次只响一声，不需要 SortAudio 那种轮转池。
+	_alarm = AudioStreamPlayer.new()
+	_alarm.stream = AlertTone.stream()
+	_alarm.bus = "Master"
+	_alarm.volume_db = AlertTone.VOLUME_DB
+	add_child(_alarm)
 	_flicker_in = mirror_in_time(FLICKER_OUT)
 	set_process(false)
 	# 先躲在隐藏状态里把版排一次。
@@ -185,6 +201,9 @@ func show_error(title: String, message: String) -> void:
 	_t = 0.0
 	modulate.a = 0.0
 	set_process(true)
+	if sound_enabled and _alarm != null:
+		# 重新 play 会把正在响的那声从头来过——和"重新闪一次"是同一个意思
+		_alarm.play()
 
 
 ## 关掉（播退场的那串硬闪）。已经关了就什么都不做。

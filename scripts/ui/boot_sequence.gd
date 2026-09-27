@@ -72,10 +72,16 @@ const SCRAMBLE := "#%*/\\<>|_+=~^"
 ## 但窗口是可缩放的，写死的话换个分辨率日志块就贴边了。
 const LOG_X0 := 0.09          ## 日志块左边距
 const LOG_X1 := 0.91          ## 右侧状态列的右边界
-const LOG_TOP := 0.19         ## 日志块顶部
+## 日志块顶部。11 行日志必须整个待在**标题框上方**：标题框是居中的
+## （上沿在中线往上 65px），日志要是不挪上去，最后两行和警示框就会
+## 压在标题框上。所以它比"看着顺眼"的位置更靠上一点。
+const LOG_TOP := 0.12
 const LOG_LINE_H := 22.0      ## 行高（12px 字 + 10px 行距）
 const STATUS_W := 0.22        ## 状态列宽度（占屏宽）
-const TITLE_Y := 0.56         ## 标题基线
+## 标题框：基线在框顶下方 46px、框高 130px（36px 标题 + 白线 + 副标题 + 小字）。
+## 这两个数一起决定框的位置——框心对齐屏幕中线，见 _draw_title。
+const TITLE_BOX_H := 130.0
+const TITLE_BASELINE_IN := 46.0
 
 var _lines: Array = []
 ## 三处故障：[起始时刻, 时长]
@@ -316,8 +322,8 @@ static func boot_lines(f: Dictionary) -> Array:
 		"status": "已读取" if bool(f.get("saved", false)) else "未找到 · 已初始化"})
 	lines.append({"text": "阶段进度", "kind": "sys",
 		"status": "已通过 %d / %d" % [int(f.get("cleared", 0)), int(f.get("stages", 0))]})
-	lines.append({"text": "单元权限已确认：只做排序，其余不问", "status": "[!]", "kind": "alert"})
-	lines.append({"text": "监控已启用。你写的每一行都会被执行。", "status": "", "kind": "loud"})
+	lines.append({"text": "单元权限已确认", "status": "[!]", "kind": "alert"})
+	lines.append({"text": "监控已启用。", "status": "", "kind": "loud"})
 	return lines
 
 
@@ -476,20 +482,24 @@ func _draw_scanlines(w: float, h: float) -> void:
 
 
 ## 四角 L 形角标。和 PrtsFrame 同一个形状，但这里要按矩形随手画（见该类说明）。
+##
+## 每个角是"一条贴边的横臂 + 一条贴边的竖臂"。横臂的 y 必须用**边线减厚度**
+## （下边就是 bottom - thick），不能写成"下边 - 臂长"——那样下面两个角的横臂
+## 会浮到角上方 20 多像素，和竖臂接不上，看起来就是"下面的角错位了"。
 func _draw_brackets(r: Rect2, blen: float, thick: float, color: Color) -> void:
-	var x1 := r.position.x + r.size.x - blen
-	var y1 := r.position.y + r.size.y - blen
-	var x2 := r.position.x + r.size.x - thick
-	var y2 := r.position.y + r.size.y - thick
+	var left := r.position.x
+	var top := r.position.y
+	var right := r.position.x + r.size.x
+	var bottom := r.position.y + r.size.y
 	for seg in [
-		Rect2(r.position.x, r.position.y, blen, thick),
-		Rect2(r.position.x, r.position.y, thick, blen),
-		Rect2(x1, r.position.y, blen, thick),
-		Rect2(x2, r.position.y, thick, blen),
-		Rect2(r.position.x, y1, blen, thick),
-		Rect2(r.position.x, y2, thick, blen),
-		Rect2(x1, y1, blen, thick),
-		Rect2(x2, y2, thick, blen),
+		Rect2(left, top, blen, thick),
+		Rect2(left, top, thick, blen),
+		Rect2(right - blen, top, blen, thick),
+		Rect2(right - thick, top, thick, blen),
+		Rect2(left, bottom - thick, blen, thick),
+		Rect2(left, bottom - blen, thick, blen),
+		Rect2(right - blen, bottom - thick, blen, thick),
+		Rect2(right - thick, bottom - blen, thick, blen),
 	]:
 		draw_rect(seg, color)
 
@@ -673,10 +683,18 @@ func _alert_wash() -> float:
 func _draw_title(w: float, h: float, font: Font) -> void:
 	var t := _t - title_time()
 	var cx := w * 0.5
-	var ty := h * TITLE_Y
 	var title := "能工智人 · 数据库"
 	var tw := font.get_string_size(title, HORIZONTAL_ALIGNMENT_LEFT, -1.0, Prts.FS_HUGE).x
 	var x := roundf(cx - tw * 0.5)
+
+	var sub := "PRTS · SORTING SERVER SIMULATOR"
+	var sub_font: Font = _sub_font if _sub_font != null else font
+	var sw := sub_font.get_string_size(sub, HORIZONTAL_ALIGNMENT_LEFT, -1.0, Prts.FS_SMALL).x
+
+	# 标题块整体在屏幕正中：先按内容定框、框心对齐中线，再往框里摆字。
+	# （原来是先定标题基线、框跟着基线走，于是整个框偏在中线下面。）
+	var bw := maxf(tw, sw) * 0.5 + 44.0
+	var ty := roundf(h * 0.5 - TITLE_BOX_H * 0.5 + TITLE_BASELINE_IN)
 
 	# 头 0.12 秒先落两遍错位的灰字（CRT 失同步的重影），再把白字压上去：
 	# 0.06 秒一跳，两帧就收敛，像信号"对上"了。
@@ -694,9 +712,6 @@ func _draw_title(w: float, h: float, font: Font) -> void:
 	var half := tw * 0.5 * rp
 	draw_rect(Rect2(cx - half, ty + 16.0, half * 2.0, 1.0), Prts.WHITE)
 
-	var sub := "PRTS · SORTING SERVER SIMULATOR"
-	var sub_font: Font = _sub_font if _sub_font != null else font
-	var sw := sub_font.get_string_size(sub, HORIZONTAL_ALIGNMENT_LEFT, -1.0, Prts.FS_SMALL).x
 	if t >= 0.10:
 		draw_string(sub_font, Vector2(roundf(cx - sw * 0.5), ty + 44.0), sub,
 			HORIZONTAL_ALIGNMENT_LEFT, -1.0, Prts.FS_SMALL, Prts.TEXT_HI)
@@ -712,8 +727,8 @@ func _draw_title(w: float, h: float, font: Font) -> void:
 	# 不跟着屏幕走：内容 400px 却框出 1300px，看着像个空盒子。
 	var bp := clampf((t - 0.02) / 0.20, 0.0, 1.0)
 	var boff := roundf(26.0 * (1.0 - bp) / 6.0) * 6.0
-	var bw := maxf(tw, sw) * 0.5 + 44.0
-	_draw_brackets(Rect2(cx - bw, ty - 46.0, bw * 2.0, 130.0).grow(boff), 26.0, 4.0, Prts.WHITE)
+	_draw_brackets(Rect2(cx - bw, ty - TITLE_BASELINE_IN, bw * 2.0, TITLE_BOX_H).grow(boff),
+		26.0, 4.0, Prts.WHITE)
 
 
 # ---------------------------------------------------------------- 顶栏与角标
