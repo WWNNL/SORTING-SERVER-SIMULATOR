@@ -76,6 +76,10 @@ const DIV_X := -140.0         ## 竖分隔线
 const TEXT_X := -120.0        ## 两行字的左边界
 ## 黑屏中央：百分比 + 进度条那一组的半宽
 const BAR_HALF := 150.0
+## 波形的行进速度（弧度/秒）。主波 3.0 大约每秒走 0.35 个屏宽——
+## 一段 2.4 秒的处理里它刚好从画面一头走到另一头，看得出来在流，
+## 又不至于快到晃眼。次级分量是它的 0.37 倍（见 wave_y）。
+const WAVE_SPEED := 3.0
 
 enum { ST_LIGHT, ST_DARK, ST_OUT }
 
@@ -445,13 +449,23 @@ func _draw_glow_wave(w: float, h: float) -> void:
 	var steps := 160
 	for i in steps + 1:
 		var u := float(i) / float(steps)
-		# 主波 + 一点更慢的次级起伏。次级那项要很小：大了波形会有"折角"，
-		# 看着像手抖，不像一条干净的信号线。
-		var y := h * 0.5 + sin(u * TAU * 1.35 + 0.6) * h * 0.075 \
-			+ sin(u * TAU * 0.8 + 1.9) * h * 0.010
-		pts.append(Vector2(w * u, y))
+		pts.append(Vector2(w * u, wave_y(u, h, _t)))
 	for glow in [[16.0, 0.04], [9.0, 0.07], [4.0, 0.12], [2.0, 0.85]]:
 		draw_polyline(pts, Color(1.0, 1.0, 1.0, float(glow[1])), float(glow[0]))
+
+
+## 波形上某一点的 y（u 是横向占比 0~1）。
+##
+## 波形是**走的**：给相位加一个随时间递增的项，波峰就沿着 x 一路推过去。
+## 两个分量用不同的速度（主波快、次级慢），叠出来的形状会边走边变形——
+## 同速的话整条只是平移，看着像一张图在滑，不像"信号在流"。
+##
+## 抽成纯函数（只吃占比、屏高、时刻）：动画对不对得**量**得出来——
+## 光看两张截图说不清"它真的在动"，还是我截图时手抖了一下。
+static func wave_y(u: float, h: float, t: float) -> float:
+	return h * 0.5 + sin(t * 0.7) * h * 0.006 \
+		+ sin(u * TAU * 1.35 + 0.6 + t * WAVE_SPEED) * h * 0.075 \
+		+ sin(u * TAU * 0.8 + 1.9 + t * WAVE_SPEED * 0.37) * h * 0.010
 
 
 ## 中央：大号百分比 + 进度条 + START PROCESSING / 中文状态。

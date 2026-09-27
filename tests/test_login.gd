@@ -25,6 +25,7 @@ func _initialize() -> void:
 	_test_phases()
 	_test_count()
 	_test_state_machine()
+	_test_wave()
 
 	print("\n=== 通过 %d / 失败 %d ===" % [_pass, _fail])
 	quit(1 if (_fail > 0 or _pass == 0) else 0)
@@ -182,6 +183,50 @@ func _test_state_machine() -> void:
 
 	l.free()
 	l2.free()
+
+
+# ---------------------------------------------------------------- 波形
+
+## 波形是这一屏唯一"一直在动"的东西（除了百分比数字）。这里量三件事：
+## 它真的在动、它不会跑出画面中段、它走的方向始终一致——
+## 靠眼看截图说不清"动了没有"，而且方向反了也看不出来。
+func _test_wave() -> void:
+	var h := 900.0
+	var us := [0.0, 0.17, 0.35, 0.5, 0.72, 0.9, 1.0]
+
+	var moved := 0
+	for u in us:
+		if absf(LoginScreen.wave_y(u, h, 0.0) - LoginScreen.wave_y(u, h, 0.35)) > 0.5:
+			moved += 1
+	_test("波形随时间移动", moved >= us.size() - 1,
+		"%d / %d 个采样点在 0.35 秒里挪动了" % [moved, us.size()])
+
+	# 走起来也不能跑出中段：它得一直横贯画面，压不到上下的字
+	var inside := true
+	var t := 0.0
+	while t < 3.0:
+		for u in us:
+			var y := LoginScreen.wave_y(u, h, t)
+			if y < h * 0.36 or y > h * 0.64:
+				inside = false
+		t += 0.05
+	_test("波形始终横在中段", inside,
+		"三秒里最高最低都落在 %.0f~%.0f 之间" % [h * 0.36, h * 0.64])
+
+	# 一个周期内每个采样点都在动（不是只有个别点在抖）
+	var all_move := true
+	for u in us:
+		var ys := []
+		var tt := 0.0
+		while tt < 1.0:
+			ys.append(LoginScreen.wave_y(u, h, tt))
+			tt += 0.1
+		var lo: float = ys.min()
+		var hi: float = ys.max()
+		if hi - lo < 1.0:
+			all_move = false
+	_test("每个采样点都在起伏", all_move,
+		"一秒内各点的振幅都超过 1px")
 
 
 func _test(name: String, ok: bool, detail: String) -> void:
