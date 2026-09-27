@@ -96,6 +96,8 @@ var _tab_press_pos := Vector2.ZERO
 var _tab_press_index := -1
 ## 拖动时跟着光标走的那张小卡片（见 TabDragGhost）
 var _tab_ghost: TabDragGhost
+## 登入界面。播完自己销毁，这里跟着置空（见 LoginScreen）。
+var _login: LoginScreen = null
 ## 开机自检动画。播完自己销毁，这里跟着置空（见 BootSequence）。
 var _boot: BootSequence = null
 
@@ -139,9 +141,19 @@ func _ready() -> void:
 	_clear_task()
 	_emit_state()
 
-	# 开机自检动画：压在界面之上播一遍，播完自己销毁（见 BootSequence）。
-	# 放在最后：底下的界面得已经搭好（它就是动画结束后露出来的那一屏），
-	# 上面那几条开机横幅也已经进了控制台——玩家跳过动画时它们就在那儿。
+	# 先登入，再自检，最后才露出界面（都是压在界面之上的浮层，播完自销毁）。
+	# 顺序不能反：登入是"你是谁、有没有权限"，自检是"这台机器现在什么状态"。
+	# 两个都放在最后创建：底下的界面得已经搭好（它就是这两层播完之后露出来的
+	# 那一屏），上面那几条开机横幅也已经进了控制台——玩家跳过时它们就在那儿。
+	_login = LoginScreen.new()
+	_login.finished.connect(_on_login_finished)
+	add_child(_login)
+
+
+func _on_login_finished() -> void:
+	_login = null
+	# 登入的退场以整屏黑收尾，自检从黑屏起步，接得上；而且这里必须**同步**
+	# 把它挂上：晚一帧的话，登入已经销毁、自检还没建，会闪一下底下的主界面。
 	_boot = BootSequence.new()
 	_boot.finished.connect(_on_boot_finished)
 	add_child(_boot)
@@ -619,6 +631,11 @@ func _popup_error(text: String) -> void:
 ## 报错弹窗当前是否开着（测试与外部查询用）。
 func error_popup() -> ErrorPopup:
 	return _error_popup
+
+
+## 登入界面节点。播完自己销毁，这里会变成 null（测试与调试用）。
+func login() -> LoginScreen:
+	return _login
 
 
 ## 开机动画节点。播完自己销毁，这里会变成 null（测试与调试用）。

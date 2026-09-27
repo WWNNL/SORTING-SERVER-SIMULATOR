@@ -44,23 +44,34 @@ func _draw() -> void:
 	if bracket_len <= 0:
 		return
 
-	var L := float(bracket_len)
-	var T := float(thickness)
-	var x1 := w - L
-	var y1 := h - L
+	draw_brackets(self, Rect2(0, 0, w, h), float(bracket_len), float(thickness), bracket_color)
 
-	# 左上
-	draw_rect(Rect2(0, 0, L, T), bracket_color)
-	draw_rect(Rect2(0, 0, T, L), bracket_color)
-	# 右上
-	draw_rect(Rect2(x1, 0, L, T), bracket_color)
-	draw_rect(Rect2(w - T, 0, T, L), bracket_color)
-	# 左下
-	draw_rect(Rect2(0, h - T, L, T), bracket_color)
-	draw_rect(Rect2(0, y1, T, L), bracket_color)
-	# 右下
-	draw_rect(Rect2(x1, h - T, L, T), bracket_color)
-	draw_rect(Rect2(w - T, y1, T, L), bracket_color)
+
+## 四角 L 形角标。每个角是"一条贴边的横臂 + 一条贴边的竖臂"——
+## 横臂的 y 必须用**边线减厚度**（下边就是 bottom - thick），不能写成
+## "下边 - 臂长"：那样下面两个角的横臂会浮到角上方 20 多像素，和竖臂接不上，
+## 看起来就是"下面的角画错了"（开机动画里手抄过一遍，就抄错在这里）。
+##
+## 做成静态函数是为了给"不是 PrtsFrame 的绘制方"用：开机动画和登入界面的
+## 角标位置每帧都在动（会拍入、会跟着色块走），挂不了控件，只能自己在 _draw
+## 里画。传 CanvasItem 进来而不是在类里画，就是为这个。
+static func draw_brackets(ci: CanvasItem, r: Rect2, blen: float, thick: float,
+		color: Color) -> void:
+	var left := r.position.x
+	var top := r.position.y
+	var right := r.position.x + r.size.x
+	var bottom := r.position.y + r.size.y
+	for seg in [
+		Rect2(left, top, blen, thick),
+		Rect2(left, top, thick, blen),
+		Rect2(right - blen, top, blen, thick),
+		Rect2(right - thick, top, thick, blen),
+		Rect2(left, bottom - thick, blen, thick),
+		Rect2(left, bottom - blen, thick, blen),
+		Rect2(right - blen, bottom - thick, blen, thick),
+		Rect2(right - thick, bottom - blen, thick, blen),
+	]:
+		ci.draw_rect(seg, color)
 
 
 ## 便捷挂载

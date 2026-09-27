@@ -61,6 +61,11 @@ const ALERT_FLASH := [
 ]
 
 
+## 单帧最多按多少秒推进。异常长的一帧（拖窗口、系统卡顿、外部阻塞）会把整段
+## 时间轴一次性推过去——自检"闪一下就没了"、登入直接跳过整段转场。
+## 宁可慢一点，也不要跳（和 Main 里给 VM 步进预算截断 delta 是同一个道理）。
+const MAX_STEP_DELTA := 0.10
+
 ## 故障窗口的时刻是**算**出来的（落在某几行的落字瞬间上），见 _schedule_glitches
 const GLITCH_SPAN := [0.14, 0.10, 0.30]   ## 三处故障各自的时长
 ## 乱码用的字符。只用 ASCII：点阵中文字体里没有制表符和方块，
@@ -127,7 +132,7 @@ func _ready() -> void:
 
 
 func _process(delta: float) -> void:
-	advance(delta)
+	advance(minf(delta, MAX_STEP_DELTA))
 
 
 ## 推进时间轴。_process 只是转调它，测试可以直接按秒推进，不用等真实帧。
@@ -481,29 +486,6 @@ func _draw_scanlines(w: float, h: float) -> void:
 		y += 3.0
 
 
-## 四角 L 形角标。和 PrtsFrame 同一个形状，但这里要按矩形随手画（见该类说明）。
-##
-## 每个角是"一条贴边的横臂 + 一条贴边的竖臂"。横臂的 y 必须用**边线减厚度**
-## （下边就是 bottom - thick），不能写成"下边 - 臂长"——那样下面两个角的横臂
-## 会浮到角上方 20 多像素，和竖臂接不上，看起来就是"下面的角错位了"。
-func _draw_brackets(r: Rect2, blen: float, thick: float, color: Color) -> void:
-	var left := r.position.x
-	var top := r.position.y
-	var right := r.position.x + r.size.x
-	var bottom := r.position.y + r.size.y
-	for seg in [
-		Rect2(left, top, blen, thick),
-		Rect2(left, top, thick, blen),
-		Rect2(right - blen, top, blen, thick),
-		Rect2(right - thick, top, thick, blen),
-		Rect2(left, bottom - thick, blen, thick),
-		Rect2(left, bottom - blen, thick, blen),
-		Rect2(right - blen, bottom - thick, blen, thick),
-		Rect2(right - thick, bottom - blen, thick, blen),
-	]:
-		draw_rect(seg, color)
-
-
 ## 点线：把项目名和右边的结果连起来。用 1px 点而不是虚线字符——
 ## 字符宽度在比例字体里对不齐列，点线能精确控制到像素。
 func _draw_dotted(from_x: float, to_x: float, y: float, color: Color) -> void:
@@ -647,7 +629,7 @@ func _draw_alert(w: float, font: Font, fade: float) -> void:
 	var box := _alert_rect(w).grow(off)
 	# 1px 暗红描边 + 粗红角标，和报错弹窗同一套框（那边是 PrtsFrame 的 border + bracket）
 	draw_rect(box, _dim(C_RED_DIM, fade), false, 1.0)
-	_draw_brackets(box, 22.0, 3.0, _dim(C_RED, fade))
+	PrtsFrame.draw_brackets(self, box, 22.0, 3.0, _dim(C_RED, fade))
 	# 署名放在框**下面**：框的上沿正好压着上一行日志，写在上边会和它叠在一起
 	# （实测"阶段进度"那一行被盖掉一半）。框下是空的，放这儿谁也不碰。
 	var ly := box.position.y + box.size.y + 16.0
@@ -727,7 +709,8 @@ func _draw_title(w: float, h: float, font: Font) -> void:
 	# 不跟着屏幕走：内容 400px 却框出 1300px，看着像个空盒子。
 	var bp := clampf((t - 0.02) / 0.20, 0.0, 1.0)
 	var boff := roundf(26.0 * (1.0 - bp) / 6.0) * 6.0
-	_draw_brackets(Rect2(cx - bw, ty - TITLE_BASELINE_IN, bw * 2.0, TITLE_BOX_H).grow(boff),
+	PrtsFrame.draw_brackets(self,
+		Rect2(cx - bw, ty - TITLE_BASELINE_IN, bw * 2.0, TITLE_BOX_H).grow(boff),
 		26.0, 4.0, Prts.WHITE)
 
 
