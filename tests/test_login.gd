@@ -258,6 +258,45 @@ func _test_wave() -> void:
 		t2 += 0.05
 	_test("副波也在中段", inside2, "三秒里都落在 %.0f~%.0f 之间" % [h * 0.36, h * 0.64])
 
+	# 方向：两条都得**从左往右**。光看 y 变没变分不出方向，得找"让 t+dt 的波形
+	# 和 t 的波形重合得最好"的那个横向位移——位移为正就是从左边往右边走。
+	var du_main := _wave_shift(h, 0.3, 0.08, 0.0,
+		LoginScreen.WAVE_SPEED, 1.0)
+	_test("主波从左往右走", du_main > 0.0,
+		"0.08 秒里右移 %.3f 个屏宽" % du_main)
+
+	var du_sub := _wave_shift(h, 0.3, 0.08, LoginScreen.WAVE_OFFSET,
+		LoginScreen.WAVE2_SPEED, LoginScreen.WAVE2_AMP)
+	_test("副波也从左往右走", du_sub > 0.0,
+		"0.08 秒里右移 %.3f 个屏宽" % du_sub)
+
+	# 方向反了的话位移会是负的——留一条断言把这个符号钉住
+	_test("位移量级合理（不是噪声凑出来的正数）",
+		du_main > 0.01 and du_main < 0.06 and du_sub > 0.005 and du_sub < du_main,
+		"主波 %.3f / 副波 %.3f（副波慢，位移该更小）" % [du_main, du_sub])
+
+
+## 找出让"t+dt 的波形"和"t 的波形"重合得最好的横向位移（以屏宽为单位）。
+## 在 ±0.06 个屏宽里逐档试，取误差最小的那一档。返回为正 = 波形在往右走。
+func _wave_shift(h: float, t: float, dt: float, offset: float,
+		speed: float, amp: float) -> float:
+	var best_du := 0.0
+	var best_err := 1.0e20
+	var du := -0.06
+	while du <= 0.0601:
+		var err := 0.0
+		var u := 0.05
+		while u <= 0.95:
+			var a := LoginScreen.wave_y(u, h, t, offset, speed, amp)
+			var b := LoginScreen.wave_y(u + du, h, t + dt, offset, speed, amp)
+			err += (b - a) * (b - a)
+			u += 0.02
+		if err < best_err:
+			best_err = err
+			best_du = du
+		du += 0.002
+	return best_du
+
 
 func _test(name: String, ok: bool, detail: String) -> void:
 	if ok:
