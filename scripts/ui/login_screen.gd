@@ -88,7 +88,7 @@ const WAVE_SPEED := 3.0
 ## 两条线只会像两条车道那样并排平移。
 const WAVE_OFFSET := 2.5
 const WAVE2_SPEED := WAVE_SPEED * 0.82
-const WAVE2_AMP := 0.80
+const WAVE2_AMP := 0.85
 
 enum { ST_LIGHT, ST_DARK, ST_OUT }
 
