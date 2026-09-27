@@ -228,6 +228,36 @@ func _test_wave() -> void:
 	_test("每个采样点都在起伏", all_move,
 		"一秒内各点的振幅都超过 1px")
 
+	# 第二条波：确实和第一条错开了，而且两条在画面里交错（不是并排的两条）
+	var crosses := false
+	var gap_min := 9999.0
+	var gap_max := 0.0
+	var prev := 0.0
+	for u in us:
+		var a := LoginScreen.wave_y(u, h, 0.0)
+		var b := LoginScreen.wave_y(u, h, 0.0, LoginScreen.WAVE_OFFSET,
+			LoginScreen.WAVE2_SPEED, LoginScreen.WAVE2_AMP)
+		var d := b - a
+		gap_min = minf(gap_min, absf(d))
+		gap_max = maxf(gap_max, absf(d))
+		if prev != 0.0 and signf(d) != signf(prev):
+			crosses = true
+		prev = d
+	_test("第二条波与第一条交错", crosses and gap_max > 4.0,
+		"两点间相差 %.1f~%.1fpx，且穿过零（有交点）" % [gap_min, gap_max])
+
+	# 副波也得待在中段，不能因为错位就跑到画面边上
+	var inside2 := true
+	var t2 := 0.0
+	while t2 < 3.0:
+		for u in us:
+			var y := LoginScreen.wave_y(u, h, t2, LoginScreen.WAVE_OFFSET,
+				LoginScreen.WAVE2_SPEED, LoginScreen.WAVE2_AMP)
+			if y < h * 0.36 or y > h * 0.64:
+				inside2 = false
+		t2 += 0.05
+	_test("副波也在中段", inside2, "三秒里都落在 %.0f~%.0f 之间" % [h * 0.36, h * 0.64])
+
 
 func _test(name: String, ok: bool, detail: String) -> void:
 	if ok:
