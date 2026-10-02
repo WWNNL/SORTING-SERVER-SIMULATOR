@@ -3,8 +3,8 @@ extends SceneTree
 ##   godot --headless --path <项目> --script res://tests/test_title.gd
 ##
 ## 只测**能测的那一半**：色带几何与翻黑顺序、收场时间轴、菜单的选中/命中/两项的
-## 去向、背景的视差与景深算法、流光的几何。画面（机房那两张图、发光线、
-## 反白条的样子）要靠实机看，headless 里既没有绘制也没有窗口。
+## 去向、背景的视差与景深算法、指示灯层的深度语言。画面（机房那张图、
+## 发光的指示灯、反白条的样子）要靠实机看，headless 里既没有绘制也没有窗口。
 ##
 ## 覆盖的坑：
 ##   · 色带留缝或重叠——底下的主界面会从缝里透出来（和接入屏同一条）。
@@ -204,48 +204,18 @@ func _test_backdrop_math() -> void:
 		"余量 %.0fpx / 最大视差 %.0fpx" % [margin, TitleBackdrop.PARALLAX_ROOM])
 
 
-# ---------------------------------------------------------------- 流光
+# ---------------------------------------------------------------- 指示灯层
 
 func _test_streams() -> void:
-	# 虚线位置要在 0~1 之间转圈
-	var ok_range := true
-	var wrapped := false
-	for k in 9:
-		var u := TitleStreams.dash_u(k, 7, 0.31)
-		if u < 0.0 or u >= 1.0:
-			ok_range = false
-		if k > 0 and u < TitleStreams.dash_u(k - 1, 7, 0.31):
-			wrapped = true
-	_test("虚线位置在 0~1 之间且会回绕", ok_range and wrapped)
+	# 灭点必须和背景那一层对上（指示灯的深度代理从它算起）
+	_test("指示灯层的灭点和背景一致", TitleStreams.VP == TitleBackdrop.VP)
 
-	# 透视压缩：u 越大，屏幕上的位置增长越快（远处挤、近处疏）
-	_test("透视压缩：越远越密",
-		TitleStreams.persp(0.0) == 0.0 and TitleStreams.persp(1.0) == 1.0
-			and TitleStreams.persp(0.5) < 0.5
-			and TitleStreams.persp(0.9) - TitleStreams.persp(0.8)
-				> TitleStreams.persp(0.2) - TitleStreams.persp(0.1),
-		"persp(0.5)=%.2f" % TitleStreams.persp(0.5))
-
-	# 两端淡出：不然 wrap 的一瞬间会"啪"地跳一下
-	_test("虚线两端淡出",
-		is_zero_approx(TitleStreams.dash_alpha(0.0))
-			and TitleStreams.dash_alpha(0.3) > 0.9
-			and is_zero_approx(TitleStreams.dash_alpha(1.0)),
-		"中段 %.2f" % TitleStreams.dash_alpha(0.3))
-
-	# u = 0 就是灭点本身
-	var screen := Vector2(1600, 900)
-	var vp := Vector2(TitleStreams.VP.x * screen.x, TitleStreams.VP.y * screen.y)
-	_test("线的起点就是灭点",
-		TitleStreams.line_point(screen, Vector2(-0.3, 0.6), 0.0).is_equal_approx(vp),
-		str(vp))
-
-	# 深度：贴着灭点最远
-	_test("深度：灭点处最远、边缘最近",
-		TitleStreams.depth_at(0.0) == 0.0 and TitleStreams.depth_at(1.0) == 1.0)
-
-	# 灭点必须和背景那一层对上（两处各写一遍，写歪了流光就不在灯带上了）
-	_test("流光的灭点和背景一致", TitleStreams.VP == TitleBackdrop.VP)
+	# 指示灯的离焦语言和背景是同一套：对焦深度处为 0，离得越远越糊
+	_test("指示灯对焦处不糊、离焦越远越糊",
+		is_zero_approx(TitleStreams.dot_blur(0.4, 0.4))
+			and TitleStreams.dot_blur(0.9, 0.4) > TitleStreams.dot_blur(0.6, 0.4),
+		"对焦 0.0 / 偏近 %.1f / 偏远 %.1f" % [
+			TitleStreams.dot_blur(0.6, 0.4), TitleStreams.dot_blur(0.9, 0.4)])
 
 
 # ---------------------------------------------------------------- 挂进树
