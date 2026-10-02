@@ -29,6 +29,11 @@ const LOOP_PAUSE := 0.3
 ## 标签页：按住后移动超过这么多像素才算拖动，否则算点击。
 ## 单点一下也会走"按下"这条路，没有这个门槛就会看到卡片闪一下。
 const TAB_DRAG_THRESHOLD := 6.0
+## 入场动画的预案开关。入场一共三段动画：接入屏白屏（身份确认）和接入屏黑屏
+## （大百分比）都在 LoginScreen 里，开机自检是 BootSequence。当前只播第三段，
+## 前两段整个留在代码里当预案——不删也不播；想换回去把这里改回 true，
+## 就恢复"白屏等按键 → 黑屏走百分比 → 自检"的完整入场，行为和原来一样。
+const INTRO_SHOW_LOGIN := false
 
 const STATE_NAMES := {
 	ST_IDLE: "待机", ST_RUNNING: "运行中", ST_PAUSED: "已暂停",
@@ -89,6 +94,8 @@ var _tab_status: TabStatus
 var _tab_upgrade: TabUpgrade
 var _tab_editor: TabEditor
 var _error_popup: ErrorPopup
+## ESC 系统菜单。常驻浮层，打开时暂停整棵树（见 EscMenu）。
+var _esc_menu: EscMenu
 ## 正在被拖动的标签页（null = 没在拖）。拖动期间只搬页面，松手才写盘。
 var _tab_drag_child: Node = null
 ## 按下时记下的位置与标签下标，用来判断这一下到底是"点击"还是"拖动"
@@ -97,6 +104,7 @@ var _tab_press_index := -1
 ## 拖动时跟着光标走的那张小卡片（见 TabDragGhost）
 var _tab_ghost: TabDragGhost
 ## 登入界面。播完自己销毁，这里跟着置空（见 LoginScreen）。
+## 现在是预案：INTRO_SHOW_LOGIN 关着时不创建，一直是 null。
 var _login: LoginScreen = null
 ## 开机自检动画。播完自己销毁，这里跟着置空（见 BootSequence）。
 var _boot: BootSequence = null
@@ -105,14 +113,22 @@ var _boot: BootSequence = null
 func _ready() -> void:
 	theme = Prts.build_theme()
 
+	# 系统设置先读：ESC 菜单里控件的初值、这一局的音效开关、窗口分辨率都从这里来。
+	# load 是纯读取，应用在这里做：音量进音频总线，分辨率赶在搭界面前把窗口
+	# 定下来（_ready 先于第一帧，玩家看不到窗口先 1600×900 再跳一下）。
+	# 渲染基准刻意不碰：窗口只是 1600×900 画面的整倍放大，字才跟着变大。
+	GameSettings.load()
+	GameSettings.apply_volume()
+	GameSettings.apply_resolution()
+
 	_audio = SortAudio.new()
 	_audio.name = "SortAudio"
 	add_child(_audio)
 
 	_build()
-	# 报错弹窗的警报音跟着「音效」开关走。开关状态在这个会话里一直有效，
-	# 所以开局这里同步一次、之后每次切换再同步（见 _on_audio_toggled）。
-	_error_popup.sound_enabled = _audio.enabled
+	# 音效开关只有一个写入口（set_audio_enabled）：控制行按钮、报错弹窗的
+	# 警报、ESC 菜单里的开关三处同步。开局这里回放一次盘上的值，不回写。
+	set_audio_enabled(GameSettings.audio_enabled, false)
 
 	Game.coins_changed.connect(_on_coins_changed)
 	Game.tiers_changed.connect(_refresh_hardware)
@@ -141,13 +157,21 @@ func _ready() -> void:
 	_clear_task()
 	_emit_state()
 
-	# 先登入，再自检，最后才露出界面（都是压在界面之上的浮层，播完自销毁）。
-	# 顺序不能反：登入是"你是谁、有没有权限"，自检是"这台机器现在什么状态"。
-	# 两个都放在最后创建：底下的界面得已经搭好（它就是这两层播完之后露出来的
-	# 那一屏），上面那几条开机横幅也已经进了控制台——玩家跳过时它们就在那儿。
-	_login = LoginScreen.new()
-	_login.finished.connect(_on_login_finished)
-	add_child(_login)
+	# 入场动画：只播开机自检（第三段），前两段接入屏是预案、不播（见 INTRO_SHOW_LOGIN）。
+	# 浮层放在最后创建：底下的界面得已经搭好（它就是自检播完之后露出来的那一屏），
+	# 上面那几条开机横幅也已经进了控制台——玩家跳过时它们就在那儿。
+	# 这会儿还在 _ready 里、第一帧没画，直接挂自检不会先闪一下主界面。
+	if INTRO_SHOW_LOGIN:
+		# 预案路径：先登入再自检，顺序不能反——登入是"你是谁、有没有权限"，
+		# 自检是"这台机器现在什么状态"；登入的退场以整屏黑收尾，自检从黑屏
+		# 起步，接得上。登入播完在 _on_login_finished 里同步挂自检。
+		_login = LoginScreen.new()
+		_login.finished.connect(_on_login_finished)
+		add_child(_login)
+	else:
+		_boot = BootSequence.new()
+		_boot.finished.connect(_on_boot_finished)
+		add_child(_boot)
 
 
 func _on_login_finished() -> void:
@@ -208,6 +232,12 @@ func _build() -> void:
 	# 拖动标签页时跟手的小卡片。靠 z_index 压住补全框、但低于报错弹窗，所以加在弹窗之前。
 	_tab_ghost = TabDragGhost.new()
 	add_child(_tab_ghost)
+
+	# ESC 菜单最后挂。z_index 400：压住报错弹窗（300），让位给开机自检（500）
+	# 和接入屏（600）——那两段是"还没进系统"，菜单不该出现。
+	_esc_menu = EscMenu.new()
+	_esc_menu.main = self
+	add_child(_esc_menu)
 
 
 func _build_topbar() -> Control:
@@ -408,13 +438,27 @@ func _build_controls() -> Control:
 func _on_audio_toggled() -> void:
 	if _audio == null:
 		return
-	_audio.set_enabled(not _audio.enabled)
-	if _error_popup != null:
-		_error_popup.sound_enabled = _audio.enabled
-	_btn_audio.text = "音效：开" if _audio.enabled else "音效：关"
-	_btn_audio.add_theme_color_override("font_color",
-		Prts.TEXT if _audio.enabled else Prts.DIM)
+	set_audio_enabled(not _audio.enabled)
 	log_line("音效已%s。" % ("开启" if _audio.enabled else "关闭"), "sys")
+
+
+## 音效总开关的唯一写入口。控制行按钮、ESC 菜单里的开关、开局读盘都走这里，
+## 按钮文案、报错弹窗的警报、菜单里的开关三处永远一致。
+## persist=false 用于开局回放盘上的值——不该把刚读出来的值再写回去一遍。
+func set_audio_enabled(on: bool, persist := true) -> void:
+	if _audio == null:
+		return
+	_audio.set_enabled(on)
+	GameSettings.audio_enabled = on
+	if _error_popup != null:
+		_error_popup.sound_enabled = on
+	_btn_audio.text = "音效：开" if on else "音效：关"
+	_btn_audio.add_theme_color_override("font_color",
+		Prts.TEXT if on else Prts.DIM)
+	if _esc_menu != null:
+		_esc_menu.sync_audio(on)
+	if persist:
+		GameSettings.save()
 
 
 func _update_file_label() -> void:
@@ -797,6 +841,22 @@ func interrupt_run(reason: String) -> void:
 	_emit_state()
 	if not was.is_empty():
 		log_line("已打断 %s 的运行：%s。" % [was, reason], "warn")
+
+
+## 「重置进度」（ESC 菜单）确认后的执行体。
+##
+## 循环与正在跑的那一局先停：reset_all 会把算法文件整个重新播种，
+## 旧的一局属于已经被删掉的文件，让它跑完只会把成绩记到别的文件名下。
+func reset_progress() -> void:
+	if _looping:
+		set_looping(false)
+	if run_active():
+		interrupt_run("重置进度")
+	Game.reset_all()
+	# files 换了一整轮，编辑器里还攥着旧代码；不重载的话玩家一敲键盘，
+	# 旧代码就会写进播种出来的新文件 0
+	reload_editor()
+	log_line("进度已重置：狗狗币、硬件、阶段进度、算法文件与统计已全部清空。", "sys")
 
 
 func _on_tab_changed(idx: int) -> void:
