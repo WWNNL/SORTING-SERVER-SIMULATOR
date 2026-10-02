@@ -29,10 +29,13 @@ const LOOP_PAUSE := 0.3
 ## 标签页：按住后移动超过这么多像素才算拖动，否则算点击。
 ## 单点一下也会走"按下"这条路，没有这个门槛就会看到卡片闪一下。
 const TAB_DRAG_THRESHOLD := 6.0
-## 入场动画的预案开关。入场一共三段动画：接入屏白屏（身份确认）和接入屏黑屏
-## （大百分比）都在 LoginScreen 里，开机自检是 BootSequence。当前只播第三段，
-## 前两段整个留在代码里当预案——不删也不播；想换回去把这里改回 true，
-## 就恢复"白屏等按键 → 黑屏走百分比 → 自检"的完整入场，行为和原来一样。
+## 入场动画的预案开关。现在开场是**开始菜单**（TitleScreen）：登入 / 退出两个选项，
+## 点登入才进系统，点退出直接退程序。登入之后接哪一段由这个开关决定：
+##   false（当前）  登入 → 开机自检 → 主界面
+##   true           登入 → 接入屏（LoginScreen，旧的"按任意键接入"预案）
+##                        → 开机自检 → 主界面
+## 接入屏整段留在代码里当预案——不删也不播；想换回去把它改回 true 即可，
+## 行为和它当年在 main 上时一样。
 const INTRO_SHOW_LOGIN := false
 
 const STATE_NAMES := {
@@ -103,8 +106,9 @@ var _tab_press_pos := Vector2.ZERO
 var _tab_press_index := -1
 ## 拖动时跟着光标走的那张小卡片（见 TabDragGhost）
 var _tab_ghost: TabDragGhost
-## 登入界面。播完自己销毁，这里跟着置空（见 LoginScreen）。
-## 现在是预案：INTRO_SHOW_LOGIN 关着时不创建，一直是 null。
+## 开始菜单。进游戏前的第一屏，登入之后自己销毁，这里跟着置空（见 TitleScreen）。
+var _title: TitleScreen = null
+## 登入界面。预案：INTRO_SHOW_LOGIN 关着时不创建，一直是 null（见 LoginScreen）。
 var _login: LoginScreen = null
 ## 开机自检动画。播完自己销毁，这里跟着置空（见 BootSequence）。
 var _boot: BootSequence = null
@@ -157,21 +161,35 @@ func _ready() -> void:
 	_clear_task()
 	_emit_state()
 
-	# 入场动画：只播开机自检（第三段），前两段接入屏是预案、不播（见 INTRO_SHOW_LOGIN）。
-	# 浮层放在最后创建：底下的界面得已经搭好（它就是自检播完之后露出来的那一屏），
-	# 上面那几条开机横幅也已经进了控制台——玩家跳过时它们就在那儿。
-	# 这会儿还在 _ready 里、第一帧没画，直接挂自检不会先闪一下主界面。
+	# 入场动画：先开始菜单（登入 / 退出），登入之后才轮到开机自检。
+	# 浮层放在最后创建：底下的界面得已经搭好（它就是这一串动画播完之后
+	# 露出来的那一屏），上面那几条开机横幅也已经进了控制台——玩家跳过时它们就在那儿。
+	# 这会儿还在 _ready 里、第一帧没画，直接挂开始菜单不会先闪一下主界面。
+	_title = TitleScreen.new()
+	_title.finished.connect(_on_title_finished)
+	_title.quit_requested.connect(_on_title_quit)
+	add_child(_title)
+
+
+## 开始菜单点了「登入」。按预案开关决定下一段：接入屏（旧预案）或直接开机自检。
+##
+## 这里必须**同步**把下一段挂上：开始菜单的收场以整屏黑收尾，自检从黑屏起步，
+## 晚一帧的话两边都不在，会闪一下底下的主界面。
+func _on_title_finished() -> void:
+	_title = null
 	if INTRO_SHOW_LOGIN:
-		# 预案路径：先登入再自检，顺序不能反——登入是"你是谁、有没有权限"，
-		# 自检是"这台机器现在什么状态"；登入的退场以整屏黑收尾，自检从黑屏
-		# 起步，接得上。登入播完在 _on_login_finished 里同步挂自检。
 		_login = LoginScreen.new()
 		_login.finished.connect(_on_login_finished)
 		add_child(_login)
-	else:
-		_boot = BootSequence.new()
-		_boot.finished.connect(_on_boot_finished)
-		add_child(_boot)
+		return
+	_boot = BootSequence.new()
+	_boot.finished.connect(_on_boot_finished)
+	add_child(_boot)
+
+
+## 开始菜单点了「退出」。开始菜单不认识应用生命周期，退程序是 Main 的事。
+func _on_title_quit() -> void:
+	get_tree().quit()
 
 
 func _on_login_finished() -> void:
@@ -675,6 +693,11 @@ func _popup_error(text: String) -> void:
 ## 报错弹窗当前是否开着（测试与外部查询用）。
 func error_popup() -> ErrorPopup:
 	return _error_popup
+
+
+## 开始菜单节点。播完自己销毁，这里会变成 null（测试与调试用）。
+func title_screen() -> TitleScreen:
+	return _title
 
 
 ## 登入界面节点。播完自己销毁，这里会变成 null（测试与调试用）。
