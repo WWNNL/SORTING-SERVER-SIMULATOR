@@ -50,6 +50,9 @@ const ROOM_PIXEL := 3.5
 ## 只微微染一点蓝，不提亮。
 const ROOM_GAIN := 0.78
 const ROOM_TINT := Color(0.92, 0.97, 1.0)
+## 指示灯闪烁的深度（0~1）。烘死的 LED 在 shader 里按"亮而孤立的块"判定
+## 后明灭，1.0 的明灭深度是全灭；0.9 留一点底亮，像隔着雾看。
+const BLINK_STRENGTH := 0.9
 ## 暗角与扫描线。菜单是要读字的，这两样都只给一点点：
 ## 暗角 0.30 够把四角压下去，扫描线 0.05 是"这台机器在发光"的笔触。
 const VIGNETTE := 0.30
@@ -76,6 +79,8 @@ var _base_room := Rect2()
 var _last_size := Vector2.ZERO
 var _fade := 1.0
 var _focus := 0.35
+## 累计秒数：喂给 shader 的 blink_time，驱动指示灯明灭
+var _t := 0.0
 
 
 func _init() -> void:
@@ -107,6 +112,7 @@ func advance(delta: float) -> void:
 	# 指数衰减：帧率变了手感也不变（按帧数插值的话，120fps 下会快一倍）
 	var k := 1.0 - exp(-SMOOTH_SPEED * maxf(delta, 0.0))
 	_mouse = _mouse.lerp(_target, k)
+	_t += maxf(delta, 0.0)
 	_apply()
 	if first and _last_size != Vector2.ZERO:
 		_mouse = _target
@@ -257,3 +263,5 @@ func _apply() -> void:
 	room_mat.set_shader_parameter("scanline", SCANLINE)
 	room_mat.set_shader_parameter("pixel", ROOM_PIXEL)
 	room_mat.set_shader_parameter("fade", _fade)
+	room_mat.set_shader_parameter("blink_time", _t)
+	room_mat.set_shader_parameter("blink_strength", BLINK_STRENGTH)

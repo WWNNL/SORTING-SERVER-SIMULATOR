@@ -3,8 +3,8 @@ extends SceneTree
 ##   godot --headless --path <项目> --script res://tests/test_title.gd
 ##
 ## 只测**能测的那一半**：色带几何与翻黑顺序、收场时间轴、菜单的选中/命中/两项的
-## 去向、背景的视差与景深算法、指示灯层的深度语言。画面（机房那张图、
-## 发光的指示灯、反白条的样子）要靠实机看，headless 里既没有绘制也没有窗口。
+## 去向、背景的视差与景深算法。画面（机房那张图、指示灯的闪烁、
+## 反白条的样子）要靠实机看，headless 里既没有绘制也没有窗口。
 ##
 ## 覆盖的坑：
 ##   · 色带留缝或重叠——底下的主界面会从缝里透出来（和接入屏同一条）。
@@ -35,7 +35,6 @@ func _run() -> void:
 	_test_menu()
 	_test_quit_vs_login()
 	_test_backdrop_math()
-	_test_streams()
 	await _test_screen_tree()
 
 	print("\n=== 通过 %d / 失败 %d ===" % [_pass, _fail])
@@ -204,27 +203,13 @@ func _test_backdrop_math() -> void:
 		"余量 %.0fpx / 最大视差 %.0fpx" % [margin, TitleBackdrop.PARALLAX_ROOM])
 
 
-# ---------------------------------------------------------------- 指示灯层
-
-func _test_streams() -> void:
-	# 灭点必须和背景那一层对上（指示灯的深度代理从它算起）
-	_test("指示灯层的灭点和背景一致", TitleStreams.VP == TitleBackdrop.VP)
-
-	# 指示灯的离焦语言和背景是同一套：对焦深度处为 0，离得越远越糊
-	_test("指示灯对焦处不糊、离焦越远越糊",
-		is_zero_approx(TitleStreams.dot_blur(0.4, 0.4))
-			and TitleStreams.dot_blur(0.9, 0.4) > TitleStreams.dot_blur(0.6, 0.4),
-		"对焦 0.0 / 偏近 %.1f / 偏远 %.1f" % [
-			TitleStreams.dot_blur(0.6, 0.4), TitleStreams.dot_blur(0.9, 0.4)])
-
-
 # ---------------------------------------------------------------- 挂进树
 
 func _test_screen_tree() -> void:
 	var t := TitleScreen.new()
 	root.add_child(t)
 	await process_frame
-	_test("挂进树之后有背景层与流光层",
+	_test("挂进树之后有背景层与菜单层",
 		t.get_child_count() >= 2 and t.find_child("*", true, false) != null)
 
 	# 背景的鼠标跟随：headless 没有真鼠标，喂一个目标进去、推进平滑

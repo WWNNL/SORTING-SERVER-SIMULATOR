@@ -4,9 +4,9 @@ extends Control
 ##
 ## 这是整套界面里唯一一屏"看得见机房"的地方，所以它承担的是世界观的门面：
 ## 玩家不是"点了一个按钮开始游戏"，而是站在 PRTS 的机柜通道口，决定接不接进去。
-## 背景是 Blender 烘的写实机房（assets/title/title_room.png），
-## 上面压着一层实时明灭的机柜指示灯（TitleStreams），镜头随鼠标微动、焦点随
-## 鼠标上下走（TitleBackdrop）。三样东西的分工写在各自文件的开头。
+## 背景是 Blender 烘的写实机房（assets/title/title_room.png），图里的机柜
+## 指示灯在 shader 里实时明灭；镜头随鼠标微动、焦点随鼠标上下走
+## （TitleBackdrop）。分工写在各自文件的开头。
 ##
 ## 版面刻意偏左：右边留给灭点，文字全在左边的暗部。
 ## 左边的机柜本身很亮（一排荧光条），所以背景层自带一层从左往右淡出的压暗
@@ -32,8 +32,8 @@ enum { ST_MAIN, ST_LOGIN, ST_QUIT, ST_DONE }
 ## 开始菜单的音效音量。BootAudio 的默认音量是给自检定的——tick -14dB 是
 ## "十几声连着来"的背景嗒声；菜单里总共就两三个音，还压着一段静音的机房，
 ## 得站到台前来：嗒声提 9dB、收场提 4dB（波形峰值离满幅还远，不会削波）。
-const TICK_DB := -5.0
-const CUT_DB := -3.0
+const TICK_DB := -2.0
+const CUT_DB := -1.0
 
 ## 菜单两项。文案中间留空格是这套界面的老写法（ESC 菜单的「设 置」也是这样）。
 const ITEMS := [
@@ -77,7 +77,6 @@ var _title_font: FontVariation = null
 var _audio: BootAudio = null
 
 var _backdrop: TitleBackdrop
-var _streams: TitleStreams
 ## 菜单层。自绘都画在它身上（原因见 _draw_ui 的说明）。
 var _ui: Control
 
@@ -97,11 +96,8 @@ func _ready() -> void:
 	_backdrop = TitleBackdrop.new()
 	add_child(_backdrop)
 
-	_streams = TitleStreams.new()
-	add_child(_streams)
-
 	# 菜单层挂在最后 = 画在最上面。父节点自己的 _draw 是先于所有子节点画的，
-	# 菜单要是画在 TitleScreen 自己身上，会被背景和流光整个盖住（踩过）。
+	# 菜单要是画在 TitleScreen 自己身上，会被背景整个盖住（踩过）。
 	_ui = Control.new()
 	_ui.set_anchors_preset(Control.PRESET_FULL_RECT)
 	_ui.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -118,7 +114,7 @@ func _ready() -> void:
 	_redraw()
 
 
-## 重画菜单层。背景和流光各自在自己的 _process 里刷新。
+## 重画菜单层。背景在自己的 _process 里刷新。
 func _redraw() -> void:
 	if _ui != null:
 		_ui.queue_redraw()
@@ -126,11 +122,6 @@ func _redraw() -> void:
 
 func _process(delta: float) -> void:
 	advance(minf(delta, MAX_STEP_DELTA))
-	# 流光跟着机房的远景层一起平移、并跟随同一个焦点：
-	# 它画在背景之上，两边要是各走各的，光就"浮"在机柜外面了。
-	if _backdrop != null and _streams != null:
-		_streams.set_parallax(_backdrop.layer_offset(0))
-		_streams.set_focus(_backdrop.focus())
 
 
 ## 推进时间轴。_process 只是转调它，测试可以直接按秒推进，不用等真实帧。
@@ -336,7 +327,7 @@ func _key(k: InputEventKey) -> void:
 # ================================================================ 绘制
 
 ## 菜单层的自绘。**不能**画在 TitleScreen 自己的 _draw 里：父节点自己的绘制
-## 先于所有子节点，画在那儿会被背景和流光整个盖住（实测第一版菜单一个字都看不见）。
+## 先于所有子节点，画在那儿会被背景整个盖住（实测第一版菜单一个字都看不见）。
 ## 所以单开一个 _ui 子节点、挂在最后，再把它的 draw 信号接到这里。
 func _draw_ui() -> void:
 	var w := size.x
