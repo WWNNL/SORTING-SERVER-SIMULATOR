@@ -604,8 +604,12 @@ func _draw_log_line(i: int, typing: int, off: Vector2, x0: float, x1: float,
 	var status := String(line["status"])
 	if status.is_empty():
 		return
+	# 点线必须一路铺到**状态文字的左边**：状态在列内右对齐，照着列左缘
+	# 截止的话，短状态前面会空出一大截——左右看着是断开的。
+	var sw := font.get_string_size(status, HORIZONTAL_ALIGNMENT_LEFT, -1.0,
+		Prts.FS_SMALL).x
+	_draw_dotted(px + tw + 14.0, x1 - sw - 12.0, py - 4.0, _dim(Prts.LINE_HI, fade))
 	var sx := x1 - status_w
-	_draw_dotted(px + tw + 14.0, sx - 12.0, py - 4.0, _dim(Prts.LINE_HI, fade))
 	var scol := Prts.TEXT_HI
 	if kind == "alert":
 		scol = C_RED
