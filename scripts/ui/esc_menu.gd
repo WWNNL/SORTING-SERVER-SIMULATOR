@@ -14,8 +14,8 @@ extends Control
 ## 正在跑的那一局、电费累计、循环模式都得一起停。自己设 PROCESS_MODE_ALWAYS，
 ## 暂停期间输入和 UI 都还活着。
 ##
-## 层级：z_index 400。压住报错弹窗（300），让位给开机自检（500）和接入屏（600）——
-## 开机那两段是"还没进系统"，菜单不该出现（见 _can_open）。
+## 层级：z_index 400。压住报错弹窗（300），让位给开机自检（500）、接入屏（600）
+## 和标题屏（700）——那三段是"还没进系统"，菜单不该出现（见 _can_open）。
 ##
 ## 红色只留给报错弹窗，所以确认重置也是黑白灰：层级靠文案把话说死，
 ## 不靠颜色制造紧张（见 error_popup 的配色说明）。
@@ -45,7 +45,7 @@ var _res_option: OptionButton
 
 func _init() -> void:
 	set_anchors_preset(Control.PRESET_FULL_RECT)
-	# 压住报错弹窗（300），让位给开机（500）/接入（600）
+	# 压住报错弹窗（300），让位给开机（500）/接入（600）/标题屏（700）
 	z_index = 400
 	mouse_filter = Control.MOUSE_FILTER_STOP
 	visible = false
@@ -371,12 +371,12 @@ func is_open() -> bool:
 	return _open
 
 
-## 开机自检 / 接入屏还在播的时候不开菜单：那是"还没进系统"的阶段，
+## 标题屏 / 开机自检 / 接入屏还在播的时候不开菜单：那是"还没进系统"的阶段，
 ## 它们自己也在吃输入（_input 里全吃掉），菜单不该跟它们抢。
 func _can_open() -> bool:
 	if main == null:
 		return true
-	return main.login() == null and main.boot() == null
+	return main.login() == null and main.boot() == null and main.title() == null
 
 
 func open_menu() -> void:

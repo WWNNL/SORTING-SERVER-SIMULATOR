@@ -29,10 +29,10 @@ const LOOP_PAUSE := 0.3
 ## 标签页：按住后移动超过这么多像素才算拖动，否则算点击。
 ## 单点一下也会走"按下"这条路，没有这个门槛就会看到卡片闪一下。
 const TAB_DRAG_THRESHOLD := 6.0
-## 入场动画的预案开关。入场一共三段动画：接入屏白屏（身份确认）和接入屏黑屏
-## （大百分比）都在 LoginScreen 里，开机自检是 BootSequence。当前只播第三段，
-## 前两段整个留在代码里当预案——不删也不播；想换回去把这里改回 true，
-## 就恢复"白屏等按键 → 黑屏走百分比 → 自检"的完整入场，行为和原来一样。
+## 接入屏的预案开关。入场现在是两段：标题屏（TitleScreen，登入/退出）→
+## 开机自检（BootSequence）。LoginScreen 那两屏（白屏身份确认 / 黑屏大百分比）
+## 整个留在代码里当预案——不删也不播；想换回去把这里改回 true，
+## 就跳过标题屏，恢复"白屏等按键 → 黑屏走百分比 → 自检"的完整入场。
 const INTRO_SHOW_LOGIN := false
 
 const STATE_NAMES := {
@@ -106,6 +106,8 @@ var _tab_ghost: TabDragGhost
 ## 登入界面。播完自己销毁，这里跟着置空（见 LoginScreen）。
 ## 现在是预案：INTRO_SHOW_LOGIN 关着时不创建，一直是 null。
 var _login: LoginScreen = null
+## 标题屏（登入 / 退出）。确认登入后自己翻黑退场、销毁，这里跟着置空。
+var _title: TitleScreen = null
 ## 开机自检动画。播完自己销毁，这里跟着置空（见 BootSequence）。
 var _boot: BootSequence = null
 
@@ -157,10 +159,10 @@ func _ready() -> void:
 	_clear_task()
 	_emit_state()
 
-	# 入场动画：只播开机自检（第三段），前两段接入屏是预案、不播（见 INTRO_SHOW_LOGIN）。
+	# 入场动画：先标题屏（登入 / 退出），确认登入后接开机自检。
 	# 浮层放在最后创建：底下的界面得已经搭好（它就是自检播完之后露出来的那一屏），
 	# 上面那几条开机横幅也已经进了控制台——玩家跳过时它们就在那儿。
-	# 这会儿还在 _ready 里、第一帧没画，直接挂自检不会先闪一下主界面。
+	# 这会儿还在 _ready 里、第一帧没画，直接挂浮层不会先闪一下主界面。
 	if INTRO_SHOW_LOGIN:
 		# 预案路径：先登入再自检，顺序不能反——登入是"你是谁、有没有权限"，
 		# 自检是"这台机器现在什么状态"；登入的退场以整屏黑收尾，自检从黑屏
@@ -169,9 +171,20 @@ func _ready() -> void:
 		_login.finished.connect(_on_login_finished)
 		add_child(_login)
 	else:
-		_boot = BootSequence.new()
-		_boot.finished.connect(_on_boot_finished)
-		add_child(_boot)
+		# 正式路径：标题屏（z 700）→ 翻黑交棒 → 自检（z 500）。交棒同样
+		# 同步：标题屏退场以整屏黑收尾，自检从黑屏起步，接得上。
+		_title = TitleScreen.new()
+		_title.login_confirmed.connect(_on_title_login)
+		add_child(_title)
+
+
+func _on_title_login() -> void:
+	_title = null
+	# 标题屏的退场以整屏黑收尾，自检从黑屏起步，接得上；而且这里必须**同步**
+	# 把它挂上：晚一帧的话，标题屏已经销毁、自检还没建，会闪一下底下的主界面。
+	_boot = BootSequence.new()
+	_boot.finished.connect(_on_boot_finished)
+	add_child(_boot)
 
 
 func _on_login_finished() -> void:
@@ -680,6 +693,11 @@ func error_popup() -> ErrorPopup:
 ## 登入界面节点。播完自己销毁，这里会变成 null（测试与调试用）。
 func login() -> LoginScreen:
 	return _login
+
+
+## 标题屏节点。确认登入后自己销毁，这里会变成 null（测试与调试用）。
+func title() -> TitleScreen:
+	return _title
 
 
 ## 开机动画节点。播完自己销毁，这里会变成 null（测试与调试用）。
