@@ -93,3 +93,12 @@ static func apply_volume() -> void:
 		return
 	AudioServer.set_bus_mute(bus, volume <= 0.001)
 	AudioServer.set_bus_volume_db(bus, linear_to_db(maxf(volume, 0.001)))
+
+
+## 注销用户用：把内存里的设置拍回默认值。只动字段；音量总线、窗口
+## 要不要跟着拍回去由调用方调 apply_volume / apply_resolution 决定——
+## 和 load 的"只读不应用"是同一条规矩。
+static func reset_defaults() -> void:
+	audio_enabled = true
+	volume = 1.0
+	video_size = BASE_RESOLUTION

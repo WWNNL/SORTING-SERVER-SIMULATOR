@@ -573,6 +573,13 @@ func load_game() -> void:
 
 
 func reset_all() -> void:
+	reset_state()
+	save_game()
+
+
+## reset_all 的字段与信号部分，**不带写盘**。注销流程走它：文件由调用方
+## 删——先写一份"新档"再删等于白忙，语义上注销后盘上也不该剩下任何东西。
+func reset_state() -> void:
 	coins = 0
 	tiers = {"cpu": 0, "ram": 0, "disk": 0, "psu": 0}
 	cleared = 0

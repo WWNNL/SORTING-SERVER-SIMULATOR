@@ -12,6 +12,8 @@ extends SceneTree
 ##   · 点「退出」却走了登入那条路（或者反过来）——两个动作共用一条收场路径，
 ##     只有 _quit_armed 分得开，搞错就是"点了退出反而进游戏"。
 ##   · 收场中还能再点一次——出现第二次收场，信号发两遍。
+##   · 注销没过确认就把数据删了 / 注销交棒进了游戏或退程序——
+##     它该删完数据留在原地待机。
 ##   · 视差方向反了——"镜头在动"就成了"画面整体在抖"。
 ##   · 焦点算法没把"对焦处的模糊"降到 0——永远糊着，等于没有对焦。
 ##   · 机房没接进渲染视口 / LED 材质没配上——背景当场黑屏或灯全不闪。
@@ -35,6 +37,7 @@ func _run() -> void:
 	_test_timeline()
 	_test_menu()
 	_test_quit_vs_login()
+	_test_logout()
 	_test_backdrop_math()
 	await _test_screen_tree()
 
@@ -115,28 +118,84 @@ func _test_timeline() -> void:
 func _test_menu() -> void:
 	var t := TitleScreen.new()
 	t.size = Vector2(1600, 900)
-	_test("正好两个选项", t.item_count() == 2,
-		"%s / %s" % [t.item_label(0), t.item_label(1)])
-	_test("两项是登入与退出",
+	_test("正好三个选项", t.item_count() == 3,
+		"%s / %s / %s" % [t.item_label(0), t.item_label(1), t.item_label(2)])
+	_test("登入 / 退出 / 注销",
 		t.item_label(0).replace(" ", "") == "登入"
-			and t.item_label(1).replace(" ", "") == "退出")
+			and t.item_label(1).replace(" ", "") == "退出"
+			and t.item_label(2).replace(" ", "") == "注销")
 
 	# 上下移动要能转圈，不能卡在某一头
 	t.move_selection(-1)
-	_test("往上越界回到最后一项", t.selected() == 1, "选中 %d" % t.selected())
+	_test("往上越界回到最后一项", t.selected() == 2, "选中 %d" % t.selected())
 	t.move_selection(1)
 	_test("往下越界回到第一项", t.selected() == 0, "选中 %d" % t.selected())
 
-	# 命中测试：两项的矩形不能重叠，空白处不能命中
+	# 命中测试：三条矩形互不重叠，空白处不能命中
 	var r0 := t.item_rect(0)
 	var r1 := t.item_rect(1)
-	_test("两项菜单条不重叠", not r0.intersects(r1),
-		"%s / %s" % [str(r0), str(r1)])
+	var r2 := t.item_rect(2)
+	_test("三条菜单条互不重叠",
+		not r0.intersects(r1) and not r1.intersects(r2) and not r0.intersects(r2),
+		"%s / %s" % [str(r0), str(r2)])
 	_test("条内命中、条外不命中",
 		t.item_at(r0.get_center()) == 0 and t.item_at(r1.get_center()) == 1
+			and t.item_at(r2.get_center()) == 2
 			and t.item_at(Vector2(r0.position.x, r0.position.y - 40.0)) == -1)
 	_test("命中之后选中项跟着变",
 		t.hover(1) and t.selected() == 1 and not t.hover(1))
+	t.free()
+
+
+# ---------------------------------------------------------------- 注销
+
+func _test_logout() -> void:
+	# 临时文件当"本机数据"，绝不碰真实存档（GameSettings.load 的老规矩）
+	var paths := ["user://test_wipe_save.json", "user://test_wipe_settings.cfg"]
+	for p in paths:
+		var f := FileAccess.open(p, FileAccess.WRITE)
+		f.store_string("data")
+		f.close()
+
+	# delete_user_data：存在才删，个数对得上（用独立的 extra 文件演示，
+	# 别动后面流程要用的 paths——那两刀真会删掉它们）
+	var extra := "user://test_wipe_extra.json"
+	FileAccess.open(extra, FileAccess.WRITE).store_string("x")
+	_test("delete_user_data 只删存在的文件",
+		TitleScreen.delete_user_data([extra, "user://no_such_file.json"]) == 1
+			and not FileAccess.file_exists(extra))
+
+	var t := TitleScreen.new()
+	var got: Array = []
+	t.finished.connect(func(): got.append("login"))
+	t.quit_requested.connect(func(): got.append("quit"))
+	t.wipe_paths = paths
+
+	# 第一次按下只武装确认：文件还在、也不进收场
+	t.activate(2)
+	_test("注销第一次按下只武装确认",
+		t.state() == 0 and t.selected() == 2
+			and FileAccess.file_exists(paths[0]) and FileAccess.file_exists(paths[1]),
+		"state=%d" % t.state())
+
+	# 挪走就解除确认，回来要重新按两下
+	t.hover(0)
+	t.activate(2)
+	_test("挪走后确认解除、需要重新确认",
+		t.state() == 0 and FileAccess.file_exists(paths[0]))
+
+	# 第二下进收场；走完文件删净、回到主状态、不发任何信号
+	t.activate(2)
+	_test("确认后进注销收场", t.state() == 3, "state=%d" % t.state())
+	t.advance(TitleScreen.total_time() * 0.5)
+	_test("注销收场中途文件还在",
+		t.state() == 3 and FileAccess.file_exists(paths[0]))
+	t.advance(TitleScreen.total_time())
+	_test("注销走完回待机、文件删净、不发信号",
+		t.state() == 0 and got.is_empty()
+			and not FileAccess.file_exists(paths[0])
+			and not FileAccess.file_exists(paths[1]),
+		"state=%d 信号=%s" % [t.state(), str(got)])
 	t.free()
 
 
@@ -218,7 +277,7 @@ func _test_screen_tree() -> void:
 		"相机局部 x %.2fm" % bd._cam.position.x)
 
 	# 3D 世界接线：机房装在半分辨率 SubViewport 里，三组 LED 各配一份闪烁材质
-	_test("机房装在半分辨率 SubViewport 里",
+	_test("机房装在画布同尺寸的 SubViewport 里",
 		bd._viewport != null and bd._viewport.size == TitleBackdrop.VIEW_SIZE,
 		"%d×%d" % [bd._viewport.size.x, bd._viewport.size.y])
 	_test("三组 LED 都配上了闪烁材质", bd._led_mats.size() == 3,

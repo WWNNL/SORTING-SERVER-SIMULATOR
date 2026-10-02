@@ -19,6 +19,12 @@ extends Control
 ## 退出 → 同样的收场 → 请求退出。两个动作都走同一条收场路径，
 ## 差别只在最后那句状态文案和交棒对象。
 ##
+## 注销 → 菜单原地再按一下确认（破坏性动作必须过一道确认，和 ESC 菜单的
+## 重置进度同一条规矩）→ 同样的收场 → 删掉游戏在本机产生的全部数据
+## （存档 + 设置），回到主状态继续待机。不发任何信号：注销不进游戏也不退
+## 程序——这台机器忘了你，然后接着等你。页脚的存档行每次重画都现读盘，
+## 删完自动变回"未找到"。
+##
 ## 声音只用两声：悬停的嗒声和收场的下滑音（借用 BootAudio 的合成音，
 ## 嗡鸣不用——那是开机自检的）。音效开关关掉时一声不响。
 
@@ -27,7 +33,7 @@ signal finished
 ## 收场播完，该退出了。Main 接这个信号去退程序——这一屏自己不认识应用生命周期。
 signal quit_requested
 
-enum { ST_MAIN, ST_LOGIN, ST_QUIT, ST_DONE }
+enum { ST_MAIN, ST_LOGIN, ST_QUIT, ST_LOGOUT, ST_DONE }
 
 ## 开始菜单的音效音量。BootAudio 的默认音量是给自检定的——tick -14dB 是
 ## "十几声连着来"的背景嗒声；菜单里总共就两三个音，还压着一段静音的机房，
@@ -35,11 +41,17 @@ enum { ST_MAIN, ST_LOGIN, ST_QUIT, ST_DONE }
 const TICK_DB := -2.0
 const CUT_DB := -1.0
 
-## 菜单两项。文案中间留空格是这套界面的老写法（ESC 菜单的「设 置」也是这样）。
+## 菜单三项。文案中间留空格是这套界面的老写法（ESC 菜单的「设 置」也是这样）。
 const ITEMS := [
 	{"label": "登 入", "note": "接入 PRTS 排序单元"},
 	{"label": "退 出", "note": "断开连接，退出程序"},
+	{"label": "注 销", "note": "清除本机全部数据"},
 ]
+
+## 注销确认时，菜单条 note 位置换成的警示句。
+const WIPE_CONFIRM_NOTE := "再按一次，确认清除全部数据"
+## 注销完成后，右上角状态句停留的秒数。
+const LOGOUT_MSG_TIME := 4.0
 
 # ---------------------------------------------------------------- 版面（占屏比）
 
@@ -73,6 +85,14 @@ var _done := false
 ## 这一次收场通向哪里：true = 退出，false = 登入。
 ## 在 _begin 里记下，因为 _finish 的时候 _state 已经不重要了（都是收场）。
 var _quit_armed := false
+## 注销的确认已武装：菜单停在"注销"上、按过一下之后为真。
+## 再按一下执行；挪走或按 ESC 解除（见 hover / _key）。
+var _confirm_wipe := false
+## 注销完成后的 transient 状态句，_t 走过这个时刻就换回待机文案。
+var _msg_until := -1.0
+## 注销要删的文件清单，空 = 生产默认（存档 + 设置）。测试注入自己的
+## 临时文件，绝不碰真实存档——GameSettings.load 的同一条老规矩。
+var wipe_paths: Array = []
 var _title_font: FontVariation = null
 var _audio: BootAudio = null
 
@@ -130,7 +150,7 @@ func advance(delta: float) -> void:
 		return
 	_t += delta
 	match _state:
-		ST_LOGIN, ST_QUIT:
+		ST_LOGIN, ST_QUIT, ST_LOGOUT:
 			if _t >= total_time():
 				_finish()
 				return
@@ -223,6 +243,8 @@ func item_at(pos: Vector2) -> int:
 func hover(i: int) -> bool:
 	if i < 0 or i >= ITEMS.size() or i == _hover:
 		return false
+	# 离开"注销"项就解除确认：目标换了，之前那一下"准备删"不作数
+	_confirm_wipe = false
 	_hover = i
 	_tick()
 	_redraw()
@@ -233,7 +255,21 @@ func activate(i: int) -> void:
 	if _state != ST_MAIN or i < 0 or i >= ITEMS.size():
 		return
 	hover(i)
-	_begin(ST_LOGIN if i == 0 else ST_QUIT)
+	if i == ITEMS.size() - 1:
+		# 注销是破坏性动作：第一下只武装确认，再按一下才真删。
+		# （和 ESC 菜单"重置进度"必须过一道确认是同一条规矩。）
+		if not _confirm_wipe:
+			_confirm_wipe = true
+			_tick()
+			_redraw()
+			return
+	_confirm_wipe = false
+	var next := ST_LOGOUT
+	if i == 0:
+		next = ST_LOGIN
+	elif i == 1:
+		next = ST_QUIT
+	_begin(next)
 
 
 func activate_selected() -> void:
@@ -255,6 +291,10 @@ func _begin(next: int) -> void:
 func _finish() -> void:
 	if _done:
 		return
+	if _state == ST_LOGOUT:
+		# 注销不交棒：删完数据回到主状态继续待机，这一屏不销毁
+		_do_logout()
+		return
 	_done = true
 	_state = ST_DONE
 	if _audio != null:
@@ -266,6 +306,50 @@ func _finish() -> void:
 	else:
 		finished.emit()
 	queue_free()
+
+
+## 注销落地：删文件、内存复位、回到主状态。
+func _do_logout() -> void:
+	var paths: Array = wipe_paths if not wipe_paths.is_empty() else user_data_paths()
+	delete_user_data(paths)
+	if is_inside_tree():
+		# 存档文件删了，内存里还揣着开机时读进来的旧进度——不复位的话，
+		# 玩家接着点登入，幽灵进度会跟着进游戏、还会被重新写回盘上
+		var game: Variant = get_node_or_null("/root/Game")
+		if game != null:
+			game.reset_state()
+	# 设置也拍回默认（文件已在上面删掉）：音量总线、窗口跟着复位，
+	# 之后玩家改任何设置，写下去的就是干净的一份
+	GameSettings.reset_defaults()
+	GameSettings.apply_volume()
+	GameSettings.apply_resolution()
+	_state = ST_MAIN
+	_quit_armed = false
+	_confirm_wipe = false
+	_t = 0.0
+	_msg_until = LOGOUT_MSG_TIME
+	_redraw()
+
+
+## 注销的实际动作：删掉给定的数据文件。返回真正删掉的个数
+## （不存在的跳过——重复注销、本来就没玩过，都不算错）。
+static func delete_user_data(paths: Array) -> int:
+	var n := 0
+	for p in paths:
+		var path := String(p)
+		if FileAccess.file_exists(path):
+			DirAccess.remove_absolute(path)
+			n += 1
+	return n
+
+
+## 生产环境的注销清单：存档 + 设置，游戏在本机产生的全部数据。
+## Game 没有类名（autoload），SAVE_PATH 走预载拿。
+static func user_data_paths() -> Array:
+	return [
+		preload("res://scripts/core/game_state.gd").SAVE_PATH,
+		GameSettings.DEFAULT_PATH,
+	]
 
 
 func _tick() -> void:
@@ -315,7 +399,12 @@ func _input(event: InputEvent) -> void:
 func _key(k: InputEventKey) -> void:
 	if _state != ST_MAIN:
 		return
-	if k.is_action_pressed("ui_up") or k.keycode == KEY_W:
+	if k.is_action_pressed("ui_cancel"):
+		# ESC 解除注销确认——收场一旦开始才真正不可回退
+		if _confirm_wipe:
+			_confirm_wipe = false
+			_redraw()
+	elif k.is_action_pressed("ui_up") or k.keycode == KEY_W:
 		move_selection(-1)
 	elif k.is_action_pressed("ui_down") or k.keycode == KEY_S:
 		move_selection(1)
@@ -341,7 +430,7 @@ func _draw_ui() -> void:
 	_draw_menu(w, h, font)
 	_draw_foot(w, h, font)
 
-	if _state == ST_LOGIN or _state == ST_QUIT:
+	if _state == ST_LOGIN or _state == ST_QUIT or _state == ST_LOGOUT:
 		_draw_wipe(w, h)
 		_draw_note(w, h, font)
 
@@ -381,6 +470,8 @@ func _draw_menu(w: float, h: float, font: Font) -> void:
 		var r := item_rect(i)
 		var label := String((ITEMS[i] as Dictionary)["label"])
 		var note := String((ITEMS[i] as Dictionary)["note"])
+		if i == ITEMS.size() - 1 and _confirm_wipe:
+			note = WIPE_CONFIRM_NOTE
 		var on := i == _hover
 		if on:
 			_ui.draw_rect(r, Prts.WHITE)
@@ -427,8 +518,12 @@ func _draw_foot(w: float, h: float, font: Font) -> void:
 
 	# 右上角的状态：一个方块光标 + 一行字。方块是画的，不是字形——
 	# 点阵字体里没有方块符号，混进来会掉到系统字体上，字形风格当场就花。
+	# 注销刚完成的那几秒，这里替机器说一句"忘了你"。
 	var sx := rx - 200.0
-	_ui.draw_string(font, Vector2(sx, size.y * BRAND_Y), "外部接入 · 待操作",
+	var status := "外部接入 · 待操作"
+	if _t < _msg_until:
+		status = "用户已注销 · 数据已清除"
+	_ui.draw_string(font, Vector2(sx, size.y * BRAND_Y), status,
 		HORIZONTAL_ALIGNMENT_LEFT, -1.0, Prts.FS_SMALL, Prts.TEXT_HI)
 	if fmod(_t, 1.2) < 0.72:
 		_ui.draw_rect(Rect2(sx - 14.0, size.y * BRAND_Y - 10.0, 6.0, 11.0), Prts.WHITE)
@@ -448,7 +543,11 @@ func _draw_note(w: float, h: float, font: Font) -> void:
 	var p := clampf((_t - wipe_done() * 0.55) / 0.22, 0.0, 1.0)
 	if p <= 0.0:
 		return
-	var text := "正在建立连接…" if _state == ST_LOGIN else "正在断开连接…"
+	var text := "正在建立连接…"
+	if _state == ST_QUIT:
+		text = "正在断开连接…"
+	elif _state == ST_LOGOUT:
+		text = "正在清除用户数据…"
 	var col := Prts.TEXT_HI
 	col.a = p
 	_ui.draw_string(font, Vector2(w * PAD, h - 48.0), text,
