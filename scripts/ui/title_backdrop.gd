@@ -23,10 +23,10 @@ extends Control
 ## 对外的结构：一个 SubViewport（3D 世界）+ 一个 TextureRect（挂着色器上屏）
 ## + 两层压暗。
 
-## 渲染分辨率：内容画布的一半。上屏走 NEAREST 放大，一格正好 2 个画布
-## 像素，和 12px 点阵字是同一种颗粒。画布恒为 1600×900（stretch=viewport），
-## 所以 2×/3× 窗口下这个换算照样成立。
-const VIEW_SIZE := Vector2i(800, 450)
+## 渲染分辨率：与内容画布同尺寸。试过半分辨率再放大，LED 和几何细节全是
+## 软的，叠加景深模糊之后整个画面发糊——分辨率给足，锐度才有保证；
+## 像素颗粒感改由着色器的 2px 量化提供（见 _apply 的 pixel），不靠放大。
+const VIEW_SIZE := Vector2i(1600, 900)
 
 const HALL_SCENE := "res://assets/title/server_hall.glb"
 
@@ -56,9 +56,9 @@ const SMOOTH_SPEED := 6.0
 ## 上限就是 1.0（画面下沿）。
 const FOCUS_MIN := 0.0
 const FOCUS_MAX := 1.0
-## 离焦模糊上限（**源图纹素**）。渲染是 800×450、上屏放大 2 倍，
-## 3.5 纹素 ≈ 旧版烘图（3200×1800）上 12 纹素的观感。
-const BLUR_ROOM := 3.5
+## 离焦模糊上限（源图纹素 = 画布像素，渲染是 1:1 上屏）。
+## 7px ≈ 旧版烘图（3200×1800）12 纹素的屏上观感（0.57 屏像素/纹素）。
+const BLUR_ROOM := 7.0
 
 ## 机房的一点调色。画面本身是冷调，这里整体压暗一档——
 ## 菜单是"还没开灯的机房"，画面要暗得能容下反白的高亮块；
@@ -226,7 +226,8 @@ func _build_world() -> void:
 	_viewport.add_child(world)
 
 	# 环境：机房是"还没开灯"的暗调，环境光给一点冷蓝就够；
-	# 雾把走道尽头压进黑里，glow 接 LED 和荧光条的发光。
+	# 雾把走道尽头压进黑里（密度压低，只留纵深暗示，多了画面发灰发糊）；
+	# glow 接 LED 和荧光条的发光，强度压住——halo 一宽就是"没对上焦"。
 	var env := Environment.new()
 	env.background_mode = Environment.BG_COLOR
 	env.background_color = Color(0.008, 0.012, 0.02)
@@ -235,10 +236,10 @@ func _build_world() -> void:
 	env.ambient_light_energy = 0.4
 	env.fog_enabled = true
 	env.fog_light_color = Color(0.02, 0.035, 0.07)
-	env.fog_density = 0.035
+	env.fog_density = 0.02
 	env.glow_enabled = true
-	env.glow_intensity = 0.7
-	env.glow_bloom = 0.08
+	env.glow_intensity = 0.45
+	env.glow_bloom = 0.03
 	env.glow_hdr_threshold = 1.0
 	var we := WorldEnvironment.new()
 	we.environment = env
@@ -359,9 +360,9 @@ func _apply() -> void:
 	mat.set_shader_parameter("tint", ROOM_TINT)
 	mat.set_shader_parameter("vignette", VIGNETTE)
 	mat.set_shader_parameter("scanline", SCANLINE)
-	# 源图本来就是半分辨率，NEAREST 上屏自带 2 画布像素一格的颗粒，
-	# 着色器自己的量化关掉（pixel <= 1 即不量化）
-	mat.set_shader_parameter("pixel", 1.0)
+	# 像素颗粒：2 画布像素一格，和点阵字同一种颗粒（渲染本身 1:1，
+	# 颗粒感全靠这个量化提供）
+	mat.set_shader_parameter("pixel", 2.0)
 	mat.set_shader_parameter("fade", _fade)
 
 	# LED 的时钟。三组灯共享一个 time_s，相位靠顶点色岔开。
