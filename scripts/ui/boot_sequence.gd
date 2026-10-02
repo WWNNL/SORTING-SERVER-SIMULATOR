@@ -486,15 +486,33 @@ func _draw_scanlines(w: float, h: float) -> void:
 		y += 3.0
 
 
-## 点线：把项目名和右边的结果连起来。用 1px 点而不是虚线字符——
+## 点线：把项目名和右边的结果连起来。用点而不是虚线字符——
 ## 字符宽度在比例字体里对不齐列，点线能精确控制到像素。
+##
+## 点的大小和间距跟着窗口倍率走（窗口 = 1600×900 画布的整数倍，见 GameSettings）：
+## 1× 是 1px 点 / 4px 距，2× 是 2px 点 / 8px 距，3× 是 3px / 12px。不跟着走的话，
+## 高分辨率下 1px 的点夹在按倍率放大的字里细成一根刺，点线断得看不出是"线"。
 func _draw_dotted(from_x: float, to_x: float, y: float, color: Color) -> void:
 	if to_x - from_x < 16.0:
 		return
+	var metric := dotted_metrics(_window_factor())
 	var x := ceilf(from_x)
 	while x < to_x:
-		draw_rect(Rect2(x, y, 1.0, 1.0), color)
-		x += 4.0
+		draw_rect(Rect2(x, y, metric.x, metric.y), color)
+		x += metric.y
+
+
+## 窗口倍率：窗口宽 / 内容画布宽。设置里 2× 分辨率就是 2.0，拖拽出非整数倍时
+## 取整数部分（点要落在整像素格上，nearest 放大才是方的）。
+func _window_factor() -> float:
+	var base := get_viewport().get_visible_rect().size.x
+	return DisplayServer.window_get_size().x / maxf(base, 1.0)
+
+
+## 点线的一组几何：(点的大小, 点距)，都按内容像素算。纯函数，测试用。
+static func dotted_metrics(factor: float) -> Vector2:
+	var size := maxf(1.0, floorf(factor))
+	return Vector2(size, 4.0 * size)
 
 
 ## 标题起来之后把自检日志压暗：它退成背景，画面主体交给标题。

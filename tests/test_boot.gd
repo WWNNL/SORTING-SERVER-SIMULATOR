@@ -33,11 +33,34 @@ func _initialize() -> void:
 	_test_lines()
 	_test_timeline()
 	_test_skip()
+	_test_dotted()
 
 	print("\n=== 通过 %d / 失败 %d ===" % [_pass, _fail])
 	# 一条都没跑起来（比如被测脚本自己没编译过）也算失败：
 	# 否则"0 通过 0 失败"看起来是绿的，其实什么都没验。
 	quit(1 if (_fail > 0 or _pass == 0) else 0)
+
+
+# ---------------------------------------------------------------- 点线几何
+
+func _test_dotted() -> void:
+	# 点的大小和间距跟着窗口倍率走：倍率翻倍，点和距都翻倍
+	var m1 := BootSequence.dotted_metrics(1.0)
+	var m2 := BootSequence.dotted_metrics(2.0)
+	var m3 := BootSequence.dotted_metrics(3.0)
+	_test("1× 是 1px 点 / 4px 距",
+		m1.x == 1.0 and m1.y == 4.0, "%s" % str(m1))
+	_test("2× 是 2px 点 / 8px 距",
+		m2.x == 2.0 and m2.y == 8.0, "%s" % str(m2))
+	_test("3× 是 3px 点 / 12px 距",
+		m3.x == 3.0 and m3.y == 12.0, "%s" % str(m3))
+	# 非整数倍率取整（点要落在整像素格上，nearest 放大才是方的）
+	var m13 := BootSequence.dotted_metrics(1.5)
+	_test("1.5 倍率取整到 1px", m13.x == 1.0 and m13.y == 4.0, "%s" % str(m13))
+	# 点距恒为点大小的 4 倍：疏密观感在哪个倍率下都一致
+	var rhythmic := BootSequence.dotted_metrics(2.0).y \
+		== BootSequence.dotted_metrics(2.0).x * 4.0
+	_test("点距恒为点大小的 4 倍", rhythmic, "疏密观感不随倍率漂移")
 
 
 # ---------------------------------------------------------------- 文案
