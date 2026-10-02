@@ -9,6 +9,8 @@ extends Node
 ##          它一直在，音高一直在涨，玩家不会注意它，但关掉会立刻觉得空。
 ##   tick   每行自检落字的一声嗒。音量刻意小（-14dB）：十几声连着来，
 ##          响一点就从"机器在跑"变成"有人在敲键盘"。
+##          开始菜单借用它当悬停音时嫌这个音量太小（那边总共两三个音），
+##          play_tick/play_cut 都收一个可选的 volume_db，由调用方改档。
 ##   buzz   警示拍的双音蜂鸣。波形不在这个文件里——报错弹窗也要响同一个声音，
 ##          所以它被抽成了 AlertTone，两处共用。
 ##   thump  标题砸下时的闷响：频率从 90Hz 滑到 35Hz，尾巴拖长，
@@ -84,7 +86,9 @@ func stop_hum() -> void:
 	set_process(true)
 
 
-func play_tick() -> void:
+func play_tick(volume_db := TICK_DB) -> void:
+	if _tick != null:
+		_tick.volume_db = volume_db
 	_play(_tick)
 
 
@@ -96,7 +100,9 @@ func play_thump() -> void:
 	_play(_thump)
 
 
-func play_cut() -> void:
+func play_cut(volume_db := CUT_DB) -> void:
+	if _cut != null:
+		_cut.volume_db = volume_db
 	_play(_cut)
 
 

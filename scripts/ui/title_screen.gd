@@ -29,6 +29,12 @@ signal quit_requested
 
 enum { ST_MAIN, ST_LOGIN, ST_QUIT, ST_DONE }
 
+## 开始菜单的音效音量。BootAudio 的默认音量是给自检定的——tick -14dB 是
+## "十几声连着来"的背景嗒声；菜单里总共就两三个音，还压着一段静音的机房，
+## 得站到台前来：嗒声提 9dB、收场提 4dB（波形峰值离满幅还远，不会削波）。
+const TICK_DB := -5.0
+const CUT_DB := -3.0
+
 ## 菜单两项。文案中间留空格是这套界面的老写法（ESC 菜单的「设 置」也是这样）。
 const ITEMS := [
 	{"label": "登 入", "note": "接入 PRTS 排序单元"},
@@ -251,7 +257,7 @@ func _begin(next: int) -> void:
 	_t = 0.0
 	# 收场音：下滑音。嗡鸣不用（那是开机自检的），这里只要一个干脆的收束。
 	if _audio != null and GameSettings.audio_enabled:
-		_audio.play_cut()
+		_audio.play_cut(CUT_DB)
 	_redraw()
 
 
@@ -273,7 +279,7 @@ func _finish() -> void:
 
 func _tick() -> void:
 	if _audio != null and GameSettings.audio_enabled:
-		_audio.play_tick()
+		_audio.play_tick(TICK_DB)
 
 
 # ================================================================ 输入
