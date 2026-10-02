@@ -1,35 +1,53 @@
 class_name TitleBackdrop
 extends Control
-## 开始菜单的背景：一张 Blender 烘的机房图 + 鼠标驱动的视差与景深。
+## 开始菜单的背景：实时渲染的 3D 机房 + 鼠标驱动的视差与景深。
 ##
-## 机房本体（title_room.png）渲染自写实版的服务器机厅——两排机柜、蓝白 LED、
-## 天花双灯带、体积雾与反射地板。它的内部不再分层：机柜是坐在地上的，把地面
-## 和机柜拆到两层里，滑动时接缝和倒影会露馅；单层反而稳。视差因此是"整幅
-## 画面在滑"（镜头本身在微动），纵深交给景深与流光去讲。
+## 机房本体是 Blender 建模的服务器机厅（assets/title/server_hall.glb），装在
+## SubViewport 里每帧实时渲染，再经由 title_layer.gdshader 上屏。视差不再是
+## "整幅画面在滑"——是镜头真的在走道里横移：近处的机柜滑得多、远处的少，
+## 纵深是几何给的，不是效果调出来的。机柜指示灯的明灭由导出时写进顶点色的
+## 三元组驱动（led_blink.gdshader），三组 LED（蓝/白/青）各配一份材质。
 ##
-## 深度从哪来：这张图没有深度缓冲，但机房是**透视**的，画面纵坐标基本
-## 就等于深度（贴着灭点最远、画面上下两端最近）。着色器拿这个当深度代理，
-## 于是"对焦"变成一个可以直接算的量：|深度 − 焦点|。
+## 景深仍是深度代理：渲染出来的画面依然没有深度缓冲，但机房是**透视**的，
+## 画面纵坐标基本就等于深度（贴着灭点最远、画面上下两端最近），着色器照旧
+## 拿"离灭点线的距离"当深度代理，"对焦"于是还是那个可以直接算的量。
+##
+## 相机和当年烘图的那台是同一台（30mm、走道中央、瞄准走道尽头——Blender 的
+## Z-up 已折算成 Godot 的 Y-up，见 CAM_POS / CAM_AIM / CAM_FOV），灭点位置
+## 因此不变：景深代理和标题屏"右侧留灭点"的版面都不受换渲染方式的影响。
 ##
 ## 鼠标的两个分量各管一件事，合起来就是"镜头在动"：
-##   左右 → 视差：整层往鼠标的反方向滑
+##   左右 → 视差：镜头在走道里横移（画面朝反向滑）
 ##   上下 → 对焦：鼠标往上对远处，往下对近处（画面上下两端一起糊，中间清楚）
 ##
-## 全自绘之外的东西很少：一个 TextureRect 挂着色器，再加两层压暗。
+## 对外的结构：一个 SubViewport（3D 世界）+ 一个 TextureRect（挂着色器上屏）
+## + 两层压暗。
+
+## 渲染分辨率：内容画布的一半。上屏走 NEAREST 放大，一格正好 2 个画布
+## 像素，和 12px 点阵字是同一种颗粒。画布恒为 1600×900（stretch=viewport），
+## 所以 2×/3× 窗口下这个换算照样成立。
+const VIEW_SIZE := Vector2i(800, 450)
+
+const HALL_SCENE := "res://assets/title/server_hall.glb"
+
+## 相机：位置与瞄准点（Godot 坐标，Y-up）。等价于 Blender 里那台
+## (0, -7.6, 1.38)、瞄准 (-1.05, 8.0, 1.22) 的相机：x 不动，y/z 互换、z 取反。
+const CAM_POS := Vector3(0.0, 1.38, 7.6)
+const CAM_AIM := Vector3(-1.05, 1.22, -8.0)
+## 垂直视场角。30mm 镜头、36mm 传感器（16:9）→ 2·atan(0.6·9/16) ≈ 37.35°。
+## Godot 的 fov 是垂直口径（默认 KEEP_HEIGHT），正好对上。
+const CAM_FOV := 37.35
 
 ## 灭点在画面上的位置（占屏宽 / 屏高）。这是**算**出来的，不是估的：
-## 渲染那台相机是 30mm、放在走道中央 (0, -7.6, 1.38)、瞄准 (-1.05, 8.0, 1.22)，
-## 水平半视角 31.0°、垂直 18.6°，灭点因此偏右 5.6%、偏上 1.5%。
-## 值必须和渲染时的相机对上：改渲染就要改这里（流光的 VP 引用同一个值）。
+## 相机水平半视角 31.0°、垂直 18.6°，灭点偏右 5.6%、偏上 1.5%。
+## 相机参数改了就要改这里（景深代理引用它）。
 const VP := Vector2(0.556, 0.485)
 
-const ROOM_TEX := "res://assets/title/title_room.png"
-
-## 过扫描：图比屏幕大一圈。视差会让图层滑动，不留余量就会滑出边缘。
-const OVERSCAN := 1.14
-
-## 视差幅度（像素，按 1600×900 基准）。单层给中间档：太小像没动，
-## 太大就是"一张照片在平移"，24px 是"镜头在手心里晃"的量。
+## 视差幅度：镜头在走道里横移的米数。±0.3m 是"站在原地侧了侧身"——
+## 太小像没动，太大就走出了走道中线，机柜会怼到脸上。
+const PARALLAX_M := 0.3
+## 屏幕像素口径的视差（1600×900 基准）：layer_offset 对外报的就是它，
+## 量级和旧版"整幅滑动"一致（标题屏和其他层对它的认知不用改）。
 const PARALLAX_ROOM := 24.0
 ## 鼠标平滑速度（每秒衰减到 e^-speed）。直接跟手会抖，太慢又像拖不动。
 const SMOOTH_SPEED := 6.0
@@ -38,21 +56,24 @@ const SMOOTH_SPEED := 6.0
 ## 上限就是 1.0（画面下沿）。
 const FOCUS_MIN := 0.0
 const FOCUS_MAX := 1.0
-## 机房层的离焦模糊上限（像素）。图是 3200×1800、铺到 1.14 倍过扫描的屏幕上
-## 约合 0.57 纹素/屏像素；屏上要糊出 1920 图 7px 的观感，纹素半径就得 ×1.75。
-const BLUR_ROOM := 12.0
-## 像素块边长（纹素）。量化后要落在 2 个屏像素一格上，和点阵字同一种颗粒：
-## 2 / 0.57 ≈ 3.5。
-const ROOM_PIXEL := 3.5
+## 离焦模糊上限（**源图纹素**）。渲染是 800×450、上屏放大 2 倍，
+## 3.5 纹素 ≈ 旧版烘图（3200×1800）上 12 纹素的观感。
+const BLUR_ROOM := 3.5
 
-## 机房层的一点调色。渲染本身已经是冷调，这里整体压暗一档——
+## 机房的一点调色。画面本身是冷调，这里整体压暗一档——
 ## 菜单是"还没开灯的机房"，画面要暗得能容下反白的高亮块；
 ## 只微微染一点蓝，不提亮。
 const ROOM_GAIN := 0.78
 const ROOM_TINT := Color(0.92, 0.97, 1.0)
-## 指示灯闪烁的深度（0~1）。烘死的 LED 在 shader 里按"亮而孤立的块"判定
-## 后明灭，1.0 的明灭深度是全灭；0.9 留一点底亮，像隔着雾看。
+## 指示灯明灭深度（0~1），喂给 LED 材质。0.9 = 灭的时候留一点底亮。
 const BLINK_STRENGTH := 0.9
+## 三组 LED 的灯色。Blender 里就是这三种材质，名字即颜色。
+const LED_TINTS := {
+	"led_blue": Color(0.25, 0.5, 1.0),
+	"led_white": Color(0.85, 0.92, 1.0),
+	"led_cyan": Color(0.35, 0.9, 1.0),
+}
+
 ## 暗角与扫描线。菜单是要读字的，这两样都只给一点点：
 ## 暗角 0.30 够把四角压下去，扫描线 0.05 是"这台机器在发光"的笔触。
 const VIGNETTE := 0.30
@@ -65,7 +86,11 @@ const SCRIM_LEFT_WIDTH := 0.78
 const SCRIM_BOTTOM_ALPHA := 0.55
 const SCRIM_BOTTOM_HEIGHT := 0.22
 
-var _room: TextureRect
+var _viewport: SubViewport
+var _rig: Node3D
+var _cam: Camera3D
+var _led_mats: Array[ShaderMaterial] = []
+var _view: TextureRect
 var _scrim_l: TextureRect
 var _scrim_b: TextureRect
 
@@ -75,11 +100,10 @@ var _mouse := Vector2(0.5, 0.5)
 ## 测试里关掉：headless 没有真鼠标，位置永远是 (0,0)
 var follow_mouse := true
 
-var _base_room := Rect2()
 var _last_size := Vector2.ZERO
 var _fade := 1.0
 var _focus := 0.35
-## 累计秒数：喂给 shader 的 blink_time，驱动指示灯明灭
+## 累计秒数：喂给 LED 材质的 time_s，驱动指示灯明灭
 var _t := 0.0
 
 
@@ -149,15 +173,17 @@ func smoothed_mouse() -> Vector2:
 	return _mouse
 
 
-## 机房层当前的偏移（像素）。
+## 机房层当前的偏移（屏幕像素口径）。镜头横移本身是米制的，
+## 这里折算回旧版"整幅滑动"的像素量级，给需要像素口径的人（测试、
+## 想跟着背景一起滑的层）。
 func layer_offset(_i: int) -> Vector2:
-	return _room.position - _base_room.position
+	return parallax_offset(_mouse, 1.0, PARALLAX_ROOM)
 
 
-## 机房层当前的离焦模糊半径（像素）。测试核对"焦点变化真的改变了模糊量"用。
+## 机房层当前的离焦模糊半径（纹素）。测试核对"焦点变化真的改变了模糊量"用。
 ## 这层铺满屏幕、深度是逐像素算的，对外只能报一个"中段"的值。
 func layer_blur(_i: int) -> float:
-	var mat := _room.material as ShaderMaterial
+	var mat := _view.material as ShaderMaterial
 	return blur_for_depth(0.5, _focus, float(mat.get_shader_parameter("blur_max")))
 
 
@@ -174,31 +200,102 @@ static func blur_for_depth(depth: float, focus: float, blur_max: float) -> float
 
 
 ## 视差偏移：鼠标往右，画面往左（镜头在往右转）。
-## weight 留着当纵深权重——将来真要再拆层，近景给它更大的值就行。
+## weight 留着当纵深权重——真 3D 里纵深是自动的，这个量只服务对外接口。
 static func parallax_offset(mouse: Vector2, weight: float, amount: float) -> Vector2:
 	return (Vector2(0.5, 0.5) - mouse) * amount * weight
-
-
-## 过扫描之后图层该占多大。居中放大，四边各留出 OVERSCAN 的余量。
-static func layer_rect(screen: Vector2, overscan: float) -> Rect2:
-	var s := screen * overscan
-	return Rect2((screen - s) * 0.5, s)
 
 
 # ================================================================ 内部
 
 func _build() -> void:
-	_room = _make_layer(ROOM_TEX)
+	_build_world()
+	_view = _make_view()
 	_scrim_l = _make_scrim(true)
 	_scrim_b = _make_scrim(false)
 
 
-func _make_layer(path: String) -> TextureRect:
+## 3D 世界：环境 + 灯 + 机房 + 相机，全装在 SubViewport 里。
+func _build_world() -> void:
+	_viewport = SubViewport.new()
+	_viewport.size = VIEW_SIZE
+	_viewport.own_world_3d = true
+	_viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS
+	add_child(_viewport)
+
+	var world := Node3D.new()
+	_viewport.add_child(world)
+
+	# 环境：机房是"还没开灯"的暗调，环境光给一点冷蓝就够；
+	# 雾把走道尽头压进黑里，glow 接 LED 和荧光条的发光。
+	var env := Environment.new()
+	env.background_mode = Environment.BG_COLOR
+	env.background_color = Color(0.008, 0.012, 0.02)
+	env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
+	env.ambient_light_color = Color(0.45, 0.6, 0.85)
+	env.ambient_light_energy = 0.4
+	env.fog_enabled = true
+	env.fog_light_color = Color(0.02, 0.035, 0.07)
+	env.fog_density = 0.035
+	env.glow_enabled = true
+	env.glow_intensity = 0.7
+	env.glow_bloom = 0.08
+	env.glow_hdr_threshold = 1.0
+	var we := WorldEnvironment.new()
+	we.environment = env
+	world.add_child(we)
+
+	# 主光：从天上斜下来的冷光，把机柜顶和走道地面扫出一点方向感
+	var sun := DirectionalLight3D.new()
+	sun.light_color = Color(0.7, 0.82, 1.0)
+	sun.light_energy = 0.4
+	sun.rotation_degrees = Vector3(-38.0, 0.0, 0.0)
+	world.add_child(sun)
+
+	# 走道尽头的一点蓝辉光：画面的灭点方向有东西在亮，纵深才不闷
+	var far_glow := OmniLight3D.new()
+	far_glow.position = Vector3(0.0, 2.4, -13.0)
+	far_glow.light_color = Color(0.5, 0.72, 1.0)
+	far_glow.light_energy = 4.0
+	far_glow.omni_range = 34.0
+	world.add_child(far_glow)
+
+	var hall: Node3D = (load(HALL_SCENE) as PackedScene).instantiate()
+	world.add_child(hall)
+	for mesh_name in LED_TINTS:
+		var mi := hall.find_child(String(mesh_name), true, false) as MeshInstance3D
+		if mi == null:
+			push_warning("TitleBackdrop: 机房里找不到 %s" % mesh_name)
+			continue
+		var mat := ShaderMaterial.new()
+		mat.shader = load("res://assets/shaders/led_blink.gdshader")
+		mat.set_shader_parameter("tint", LED_TINTS[mesh_name])
+		mat.set_shader_parameter("blink_strength", BLINK_STRENGTH)
+		mi.material_override = mat
+		_led_mats.append(mat)
+
+	# 相机挂在一个 rig 下：rig 定在基准位姿，视差就是相机在 rig 局部空间里
+	# 沿 X（走道的横向）平移。look_at 之后 rig 的 −Z 指向走道尽头。
+	_rig = Node3D.new()
+	world.add_child(_rig)
+	_rig.position = CAM_POS
+	_rig.look_at(CAM_AIM)
+	_cam = Camera3D.new()
+	_cam.fov = CAM_FOV
+	_rig.add_child(_cam)
+	_cam.current = true
+
+
+func _make_view() -> TextureRect:
 	var tr := TextureRect.new()
-	tr.texture = load(path)
+	# 铺满背景层。没人会替它算尺寸（压暗层的尺寸在 _apply 里显式设，
+	# 这个要是也不设，就是一块 0×0 的空气——背景整个透明，主界面透出来）
+	tr.set_anchors_preset(Control.PRESET_FULL_RECT)
+	tr.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
 	tr.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	tr.stretch_mode = TextureRect.STRETCH_SCALE
 	tr.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	if _viewport != null:
+		tr.texture = _viewport.get_texture()
 
 	var mat := ShaderMaterial.new()
 	mat.shader = load("res://assets/shaders/title_layer.gdshader")
@@ -235,11 +332,10 @@ func _make_scrim(left: bool) -> TextureRect:
 
 
 func _apply() -> void:
-	if _room == null or size.x < 2.0 or size.y < 2.0:
+	if _view == null or size.x < 2.0 or size.y < 2.0:
 		return
 	if size != _last_size:
 		_last_size = size
-		_base_room = layer_rect(size, OVERSCAN)
 		_scrim_l.position = Vector2.ZERO
 		_scrim_l.size = Vector2(size.x * SCRIM_LEFT_WIDTH, size.y)
 		_scrim_b.position = Vector2(0.0, size.y * (1.0 - SCRIM_BOTTOM_HEIGHT))
@@ -247,21 +343,27 @@ func _apply() -> void:
 
 	_focus = focus_from_mouse(_mouse.y)
 
-	var off_room := parallax_offset(_mouse, 1.0, PARALLAX_ROOM)
-	_room.position = _base_room.position + off_room
-	_room.size = _base_room.size
+	# 视差本体：镜头在走道里横移（rig 的局部 X）。近处机柜滑得多、远处少，
+	# 纵深是几何给的。
+	if _cam != null:
+		var off_m := parallax_offset(_mouse, 1.0, PARALLAX_M)
+		_cam.position = Vector3(off_m.x, 0.0, 0.0)
 
-	var room_mat := _room.material as ShaderMaterial
-	room_mat.set_shader_parameter("focus", _focus)
-	room_mat.set_shader_parameter("blur_max", BLUR_ROOM)
-	room_mat.set_shader_parameter("depth_fixed", -1.0)
-	room_mat.set_shader_parameter("horizon", VP.y)
-	room_mat.set_shader_parameter("screen_size", size)
-	room_mat.set_shader_parameter("gain", ROOM_GAIN)
-	room_mat.set_shader_parameter("tint", ROOM_TINT)
-	room_mat.set_shader_parameter("vignette", VIGNETTE)
-	room_mat.set_shader_parameter("scanline", SCANLINE)
-	room_mat.set_shader_parameter("pixel", ROOM_PIXEL)
-	room_mat.set_shader_parameter("fade", _fade)
-	room_mat.set_shader_parameter("blink_time", _t)
-	room_mat.set_shader_parameter("blink_strength", BLINK_STRENGTH)
+	var mat := _view.material as ShaderMaterial
+	mat.set_shader_parameter("focus", _focus)
+	mat.set_shader_parameter("blur_max", BLUR_ROOM)
+	mat.set_shader_parameter("depth_fixed", -1.0)
+	mat.set_shader_parameter("horizon", VP.y)
+	mat.set_shader_parameter("screen_size", size)
+	mat.set_shader_parameter("gain", ROOM_GAIN)
+	mat.set_shader_parameter("tint", ROOM_TINT)
+	mat.set_shader_parameter("vignette", VIGNETTE)
+	mat.set_shader_parameter("scanline", SCANLINE)
+	# 源图本来就是半分辨率，NEAREST 上屏自带 2 画布像素一格的颗粒，
+	# 着色器自己的量化关掉（pixel <= 1 即不量化）
+	mat.set_shader_parameter("pixel", 1.0)
+	mat.set_shader_parameter("fade", _fade)
+
+	# LED 的时钟。三组灯共享一个 time_s，相位靠顶点色岔开。
+	for m in _led_mats:
+		m.set_shader_parameter("time_s", _t)

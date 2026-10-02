@@ -35,6 +35,9 @@ func _run() -> void:
 
 
 func _shot(path: String) -> void:
+	# 窗口不在前台时 macOS 会判它被遮挡、直接停画帧——frame_post_draw
+	# 永远不来，await 就挂死。每次截图前先把窗口拉回前台。
+	DisplayServer.window_move_to_foreground()
 	await RenderingServer.frame_post_draw
 	var img := root.get_viewport().get_texture().get_image()
 	img.save_png(path)

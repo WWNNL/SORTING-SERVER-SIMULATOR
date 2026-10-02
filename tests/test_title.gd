@@ -3,8 +3,8 @@ extends SceneTree
 ##   godot --headless --path <项目> --script res://tests/test_title.gd
 ##
 ## 只测**能测的那一半**：色带几何与翻黑顺序、收场时间轴、菜单的选中/命中/两项的
-## 去向、背景的视差与景深算法。画面（机房那张图、指示灯的闪烁、
-## 反白条的样子）要靠实机看，headless 里既没有绘制也没有窗口。
+## 去向、背景的视差与景深算法、3D 机房的接线。画面（实时机房的观感、指示灯的
+## 闪烁、反白条的样子）要靠实机看，headless 里既没有绘制也没有窗口。
 ##
 ## 覆盖的坑：
 ##   · 色带留缝或重叠——底下的主界面会从缝里透出来（和接入屏同一条）。
@@ -12,8 +12,9 @@ extends SceneTree
 ##   · 点「退出」却走了登入那条路（或者反过来）——两个动作共用一条收场路径，
 ##     只有 _quit_armed 分得开，搞错就是"点了退出反而进游戏"。
 ##   · 收场中还能再点一次——出现第二次收场，信号发两遍。
-##   · 视差方向反了 / 近景比远景滑得少——"纵深"就成了"画面整体在抖"。
+##   · 视差方向反了——"镜头在动"就成了"画面整体在抖"。
 ##   · 焦点算法没把"对焦处的模糊"降到 0——永远糊着，等于没有对焦。
+##   · 机房没接进渲染视口 / LED 材质没配上——背景当场黑屏或灯全不闪。
 
 var _pass := 0
 var _fail := 0
@@ -180,7 +181,7 @@ func _test_backdrop_math() -> void:
 		"对焦 %.1f / 偏离 %.1f" % [b, b2])
 
 	# 视差：鼠标往右，画面往左；偏移随幅度与权重线性缩放
-	# （单层机房：整幅一起滑，权重留给将来真要再拆层时用）
+	# （真 3D 里纵深是几何给的，这个像素口径只是对外接口）
 	var off := TitleBackdrop.parallax_offset(Vector2(1.0, 0.5), 1.0, 24.0)
 	var half := TitleBackdrop.parallax_offset(Vector2(1.0, 0.5), 0.5, 24.0)
 	_test("鼠标往右、画面往左", off.x < 0.0,
@@ -189,18 +190,6 @@ func _test_backdrop_math() -> void:
 		"权重 1.0 %.1fpx / 0.5 %.1fpx" % [off.x, half.x])
 	_test("鼠标居中时不偏",
 		TitleBackdrop.parallax_offset(Vector2(0.5, 0.5), 1.0, 24.0) == Vector2.ZERO)
-
-	# 过扫描：图必须比屏幕大，否则视差一滑就露出边缘
-	var screen := Vector2(1600, 900)
-	var rect := TitleBackdrop.layer_rect(screen, TitleBackdrop.OVERSCAN)
-	var margin := (rect.size.x - screen.x) * 0.5
-	_test("背景图比屏幕大一圈且居中",
-		rect.size.x > screen.x and rect.size.y > screen.y
-			and is_equal_approx(rect.position.x, -margin)
-			and is_equal_approx(rect.position.y, -(rect.size.y - screen.y) * 0.5),
-		"过扫描 %.0f%%、四边各留 %.0fpx" % [(TitleBackdrop.OVERSCAN - 1.0) * 100.0, margin])
-	_test("过扫描够覆盖最大视差", margin >= TitleBackdrop.PARALLAX_ROOM,
-		"余量 %.0fpx / 最大视差 %.0fpx" % [margin, TitleBackdrop.PARALLAX_ROOM])
 
 
 # ---------------------------------------------------------------- 挂进树
@@ -223,6 +212,20 @@ func _test_screen_tree() -> void:
 	_test("鼠标靠上 → 对焦到远处、画面往左滑",
 		bd.focus() < 0.35 and bd.layer_offset(0).x < 0.0,
 		"焦点 %.2f / 偏移 %.1fpx" % [bd.focus(), bd.layer_offset(0).x])
+	# 视差本体是镜头横移（rig 局部 X）：鼠标往右，镜头也往右，画面才往左滑
+	_test("镜头真的在跟着鼠标横移",
+		bd._cam != null and bd._cam.position.x < 0.0,
+		"相机局部 x %.2fm" % bd._cam.position.x)
+
+	# 3D 世界接线：机房装在半分辨率 SubViewport 里，三组 LED 各配一份闪烁材质
+	_test("机房装在半分辨率 SubViewport 里",
+		bd._viewport != null and bd._viewport.size == TitleBackdrop.VIEW_SIZE,
+		"%d×%d" % [bd._viewport.size.x, bd._viewport.size.y])
+	_test("三组 LED 都配上了闪烁材质", bd._led_mats.size() == 3,
+		"%d 份" % bd._led_mats.size())
+	_test("LED 材质走的是顶点色闪烁 shader",
+		bd._led_mats[0].shader != null
+			and bd._led_mats[0].shader.resource_path.ends_with("led_blink.gdshader"))
 
 	bd.set_mouse_target(Vector2(0.0, 1.0))
 	for i in 40:

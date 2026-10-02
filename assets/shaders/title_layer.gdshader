@@ -1,22 +1,22 @@
 shader_type canvas_item;
 render_mode blend_mix, unshaded;
 
-// 开始菜单的背景。机房是 Blender 烘的一张写实渲染图（title_room.png），
-// 这个着色器负责把"静态的一张图"变成"能对焦、能跟着鼠标晃的镜头画面"。
+// 开始菜单的背景。机房是 SubViewport 里实时渲染的 3D 场景（TitleBackdrop），
+// 这个着色器负责把"渲染出来的一帧"变成"能对焦、能跟着鼠标晃的镜头画面"。
 //
-// 四件事：
-//   1. 景深。真做景深要深度缓冲，而这张图根本没有深度——但它是**透视**的：
+// 三件事：
+//   1. 景深。真做景深要深度缓冲，而这张渲染结果没有深度——但它是**透视**的：
 //      画面上的纵坐标基本就等于深度（贴着灭点最远，画面上下两端最近）。
 //      所以拿"离灭点线的距离"当深度代理，就能做出"焦点跟着鼠标上下走"的
 //      对焦效果：鼠标往上 = 对远处，画面底部糊；往下 = 对近处，远处糊。
-//   2. 像素化。这套界面是 12px 点阵字，背景太"高清"反而像贴了张照片。
-//      量化到 2 屏幕像素一格之后，和点阵字是同一个语汇。
-//   3. 调色。增益/染色/暗角/扫描线，以及转场用的 fade。
-//   4. 指示灯闪烁。烘死的 LED 靠"亮而孤立的像素块"判定找回来，
-//      各自按 hash 出来的相位与速率明灭（见 fragment 末尾）。
+//   2. 调色。增益/染色/暗角/扫描线，以及转场用的 fade。
+//      （像素化不再需要：渲染本身就是半分辨率，NEAREST 上屏自带颗粒。）
+//
+// 机柜指示灯的明灭不在这一层——LED 是真几何，明灭写进它们自己的材质里
+// （led_blink.gdshader，顶点色驱动）。
 //
 // 模糊用的是黄金角螺旋取样的 16 抽头。单帧只跑一次、只在菜单上跑，
-// 开销可以忽略；比起真正的两趟高斯，一个 pass 里就能把半径开到十几像素。
+// 开销可以忽略；比起真正的两趟高斯，一个 pass 里就能把半径开到十几纹素。
 
 // 当前焦点深度：0 = 最远（灭点），1 = 最近（画面上下两端）
 uniform float focus : hint_range(0.0, 1.5) = 0.3;
@@ -28,7 +28,7 @@ uniform float depth_fixed = -1.0;
 uniform float horizon = 0.435;
 // 屏幕尺寸（像素）。用来把 FRAGCOORD 换算成屏幕坐标。
 uniform vec2 screen_size = vec2(1600.0, 900.0);
-// 像素块边长（<= 1 表示不量化）
+// 像素块边长（<= 1 表示不量化）。实时渲染版直接关掉：半分辨率上屏自带颗粒。
 uniform float pixel = 2.0;
 uniform float gain = 1.0;
 uniform vec3 tint = vec3(1.0);
@@ -37,13 +37,9 @@ uniform float vignette = 0.0;
 uniform float scanline = 0.0;
 // 转场：整层淡出到透明（底下是纯黑）
 uniform float fade = 1.0;
-// 指示灯闪烁：blink_time 是秒（TitleBackdrop 每帧喂），strength 0 = 关。
-uniform float blink_time = 0.0;
-uniform float blink_strength : hint_range(0.0, 1.0) = 0.0;
 
 const float GOLDEN = 2.39996323;
 const int TAPS = 16;
-const vec3 LUMA = vec3(0.299, 0.587, 0.114);
 
 void fragment() {
 	vec2 uv = UV;
@@ -91,33 +87,6 @@ void fragment() {
 // CRT 扫描线：每 3px 一条。和开机自检用的是同一种笔触。
 if (scanline > 0.0) {
 	col.rgb *= 1.0 - scanline * step(1.0, mod(FRAGCOORD.y, 3.0));
-}
-
-// 指示灯闪烁：机柜上的 LED 是烘死在图里的，让它们"活着"要在 shader 里找回来。
-// 判定用两个条件相乘，缺一不可：
-//   亮      —— 块亮度超过阈值（暗块是机身，不参与）；
-//   孤立    —— 比四邻亮出一截。灯带是大面积连续亮，邻居采样必然落在灯上，
-//              iso 归零，一条灯带才不会被闪成噪声；LED 是孤点，四周全暗。
-// 相位与速率取自块坐标的 hash：每颗灯各闪各的，约一半的灯常亮、其余按
-// 1.5~4.5Hz 明灭（明灭深度到 75%——服务器指示灯是"亮/灭"而不是"呼吸"）。
-if (blink_strength > 0.001) {
-	vec2 tq = TEXTURE_PIXEL_SIZE * pixel;
-	vec2 blk = floor(UV / tq);
-	vec2 cuv = (blk + 0.5) * tq;
-	vec2 g = tq * 9.0;
-	float l0 = dot(texture(TEXTURE, cuv).rgb, LUMA);
-	float ln = dot(texture(TEXTURE, cuv + vec2(g.x, 0.0)).rgb, LUMA);
-	float lf = dot(texture(TEXTURE, cuv - vec2(g.x, 0.0)).rgb, LUMA);
-	float lu = dot(texture(TEXTURE, cuv + vec2(0.0, g.y)).rgb, LUMA);
-	float ld = dot(texture(TEXTURE, cuv - vec2(0.0, g.y)).rgb, LUMA);
-	float iso = clamp((l0 - max(max(ln, lf), max(lu, ld)) - 0.10) * 6.0, 0.0, 1.0)
-		* step(0.30, l0);
-	float r1 = fract(sin(dot(blk, vec2(127.1, 311.7))) * 43758.5453);
-	float r2 = fract(sin(dot(blk, vec2(269.5, 183.3))) * 43758.5453) * TAU;
-	float r3 = fract(sin(dot(blk, vec2(419.2, 371.9))) * 43758.5453);
-	float gate = step(0.55, r1);
-	float wave = 0.5 + 0.5 * sin(blink_time * (1.5 + 3.0 * r3) + r2);
-	col.rgb *= 1.0 - blink_strength * iso * gate * (0.75 - 0.75 * wave * wave);
 }
 
 col.a *= fade;
