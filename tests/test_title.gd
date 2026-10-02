@@ -180,15 +180,16 @@ func _test_backdrop_math() -> void:
 			TitleBackdrop.blur_for_depth(0.1, 0.5, 8.0), b2),
 		"对焦 %.1f / 偏离 %.1f" % [b, b2])
 
-	# 视差：鼠标往右，画面往左；近景滑得比远景多
-	var far := TitleBackdrop.parallax_offset(Vector2(1.0, 0.5), 0.32, 12.0)
-	var near := TitleBackdrop.parallax_offset(Vector2(1.0, 0.5), 1.0, 42.0)
-	_test("鼠标往右、画面往左", far.x < 0.0 and near.x < 0.0,
-		"远景 %.1fpx / 近景 %.1fpx" % [far.x, near.x])
-	_test("近景滑得比远景多", absf(near.x) > absf(far.x) * 2.0,
-		"%.1f vs %.1f" % [absf(near.x), absf(far.x)])
+	# 视差：鼠标往右，画面往左；偏移随幅度与权重线性缩放
+	# （单层机房：整幅一起滑，权重留给将来真要再拆层时用）
+	var off := TitleBackdrop.parallax_offset(Vector2(1.0, 0.5), 1.0, 24.0)
+	var half := TitleBackdrop.parallax_offset(Vector2(1.0, 0.5), 0.5, 24.0)
+	_test("鼠标往右、画面往左", off.x < 0.0,
+		"偏移 %.1fpx" % off.x)
+	_test("偏移随权重线性缩放", is_equal_approx(half.x, off.x * 0.5),
+		"权重 1.0 %.1fpx / 0.5 %.1fpx" % [off.x, half.x])
 	_test("鼠标居中时不偏",
-		TitleBackdrop.parallax_offset(Vector2(0.5, 0.5), 1.0, 42.0) == Vector2.ZERO)
+		TitleBackdrop.parallax_offset(Vector2(0.5, 0.5), 1.0, 24.0) == Vector2.ZERO)
 
 	# 过扫描：图必须比屏幕大，否则视差一滑就露出边缘
 	var screen := Vector2(1600, 900)
@@ -199,8 +200,8 @@ func _test_backdrop_math() -> void:
 			and is_equal_approx(rect.position.x, -margin)
 			and is_equal_approx(rect.position.y, -(rect.size.y - screen.y) * 0.5),
 		"过扫描 %.0f%%、四边各留 %.0fpx" % [(TitleBackdrop.OVERSCAN - 1.0) * 100.0, margin])
-	_test("过扫描够覆盖最大视差", margin >= TitleBackdrop.PARALLAX_NEAR,
-		"余量 %.0fpx / 近景最大 %.0fpx" % [margin, TitleBackdrop.PARALLAX_NEAR])
+	_test("过扫描够覆盖最大视差", margin >= TitleBackdrop.PARALLAX_ROOM,
+		"余量 %.0fpx / 最大视差 %.0fpx" % [margin, TitleBackdrop.PARALLAX_ROOM])
 
 
 # ---------------------------------------------------------------- 流光
@@ -263,25 +264,29 @@ func _test_screen_tree() -> void:
 	bd.set_mouse_target(Vector2(1.0, 0.2))
 	for i in 40:
 		bd.advance(1.0 / 60.0)
-	var fore_far := bd.layer_blur(1)
-	_test("鼠标靠上 → 对焦到远处（模糊量小）",
-		bd.focus() < 0.35 and bd.layer_offset(1).x < 0.0,
-		"焦点 %.2f / 近景偏移 %.1fpx" % [bd.focus(), bd.layer_offset(1).x])
+	var blur_far := bd.layer_blur(0)
+	_test("鼠标靠上 → 对焦到远处、画面往左滑",
+		bd.focus() < 0.35 and bd.layer_offset(0).x < 0.0,
+		"焦点 %.2f / 偏移 %.1fpx" % [bd.focus(), bd.layer_offset(0).x])
 
 	bd.set_mouse_target(Vector2(0.0, 1.0))
 	for i in 40:
 		bd.advance(1.0 / 60.0)
-	# 对焦到近处时近景要明显变清楚，但**始终留一点离焦**：
-	# 它贴着镜头，深度在焦点范围之外（见 FOCUS_MAX / FORE_DEPTH）。
-	_test("鼠标靠下 → 近景明显变清楚、且始终带一点离焦",
-		bd.layer_blur(1) < fore_far * 0.5 and bd.layer_blur(1) > 0.0,
-		"远景对焦时 %.1fpx → 近景对焦时 %.1fpx" % [fore_far, bd.layer_blur(1)])
-	_test("鼠标靠下 → 远景的中段（灭点附近）最清楚",
-		TitleBackdrop.blur_for_depth(0.5, bd.focus(), TitleBackdrop.BLUR_ROOM)
-			< bd.layer_blur(1),
-		"远景 %.1fpx / 近景 %.1fpx" % [
-			TitleBackdrop.blur_for_depth(0.5, bd.focus(), TitleBackdrop.BLUR_ROOM),
-			bd.layer_blur(1)])
+	# 单层机房按"中段深度 0.5"报告模糊量：对焦远处（0.2）时中段离焦 0.3，
+	# 对焦近处（1.0）时离焦 0.5——所以靠下时中段反而更糊，灭点附近才锐。
+	_test("鼠标靠下 → 焦点移到近处、中段更糊",
+		bd.focus() > 0.9 and bd.layer_blur(0) > blur_far,
+		"靠上时 %.1fpx → 靠下时 %.1fpx" % [blur_far, bd.layer_blur(0)])
+	# 单层深度代理的硬性质：模糊在**对焦深度**处为 0，往两端都变糊——
+	# 靠下对焦时灭点（最远端）糊得最狠，这和透视画面的直觉一致。
+	_test("模糊在对焦深度处为 0、两端都更糊",
+		is_zero_approx(TitleBackdrop.blur_for_depth(bd.focus(), bd.focus(),
+				TitleBackdrop.BLUR_ROOM))
+			and TitleBackdrop.blur_for_depth(0.0, bd.focus(), TitleBackdrop.BLUR_ROOM)
+				> TitleBackdrop.blur_for_depth(0.5, bd.focus(), TitleBackdrop.BLUR_ROOM),
+		"对焦处 0 / 灭点 %.1fpx / 中段 %.1fpx" % [
+			TitleBackdrop.blur_for_depth(0.0, bd.focus(), TitleBackdrop.BLUR_ROOM),
+			TitleBackdrop.blur_for_depth(0.5, bd.focus(), TitleBackdrop.BLUR_ROOM)])
 
 	# 转场淡出：整层透明 = 露出底下的纯黑
 	bd.set_fade(0.0)

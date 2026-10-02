@@ -1,58 +1,53 @@
 class_name TitleBackdrop
 extends Control
-## 开始菜单的背景：两层 Blender 烘的机房图 + 鼠标驱动的视差与景深。
+## 开始菜单的背景：一张 Blender 烘的机房图 + 鼠标驱动的视差与景深。
 ##
-## 为什么是两层而不是一张：菜单要有"镜头随鼠标微动"的纵深，一张平图做不到——
-## 贴着镜头的那层（前景剪影）必须能相对机房滑开。机房本体内部不再分层：
-## 机柜是坐在地上的，把地面和机柜拆到两层里，滑动时接缝和倒影会露馅。
+## 机房本体（title_room.png）渲染自写实版的服务器机厅——两排机柜、蓝白 LED、
+## 天花双灯带、体积雾与反射地板。它的内部不再分层：机柜是坐在地上的，把地面
+## 和机柜拆到两层里，滑动时接缝和倒影会露馅；单层反而稳。视差因此是"整幅
+## 画面在滑"（镜头本身在微动），纵深交给景深与流光去讲。
 ##
-## 深度从哪来：这两张图都没有深度缓冲，但机房是**透视**的，画面纵坐标基本
+## 深度从哪来：这张图没有深度缓冲，但机房是**透视**的，画面纵坐标基本
 ## 就等于深度（贴着灭点最远、画面上下两端最近）。着色器拿这个当深度代理，
 ## 于是"对焦"变成一个可以直接算的量：|深度 − 焦点|。
 ##
 ## 鼠标的两个分量各管一件事，合起来就是"镜头在动"：
-##   左右 → 视差：远景滑得少、近景滑得多
+##   左右 → 视差：整层往鼠标的反方向滑
 ##   上下 → 对焦：鼠标往上对远处，往下对近处（画面上下两端一起糊，中间清楚）
 ##
-## 全自绘之外的东西很少：两个 TextureRect 挂同一个着色器，参数不同而已。
+## 全自绘之外的东西很少：一个 TextureRect 挂着色器，再加两层压暗。
 
 ## 灭点在画面上的位置（占屏宽 / 屏高）。这是**算**出来的，不是估的：
-## Blender 里那台相机是 40mm、yaw 4°、pitch 2°，水平半视角 24.2°、垂直 14.2°，
-## 灭点因此偏右 tan4°/tan24.2° × 0.5 ≈ 7.8%、偏上 6.9%。
-## 值必须和 tools/blender/server_room.py 里的相机对上：改那边就要改这里。
-const VP := Vector2(0.578, 0.435)
+## 渲染那台相机是 30mm、放在走道中央 (0, -7.6, 1.38)、瞄准 (-1.05, 8.0, 1.22)，
+## 水平半视角 31.0°、垂直 18.6°，灭点因此偏右 5.6%、偏上 1.5%。
+## 值必须和渲染时的相机对上：改渲染就要改这里（流光的 VP 引用同一个值）。
+const VP := Vector2(0.556, 0.485)
 
 const ROOM_TEX := "res://assets/title/title_room.png"
-const FORE_TEX := "res://assets/title/title_fore.png"
 
 ## 过扫描：图比屏幕大一圈。视差会让图层滑动，不留余量就会滑出边缘。
 const OVERSCAN := 1.14
 
-## 视差幅度（像素，按 1600×900 基准）。两层差 3.5 倍，纵深才立得住。
-const PARALLAX_FAR := 12.0
-const PARALLAX_NEAR := 42.0
+## 视差幅度（像素，按 1600×900 基准）。单层给中间档：太小像没动，
+## 太大就是"一张照片在平移"，24px 是"镜头在手心里晃"的量。
+const PARALLAX_ROOM := 24.0
 ## 鼠标平滑速度（每秒衰减到 e^-speed）。直接跟手会抖，太慢又像拖不动。
 const SMOOTH_SPEED := 6.0
 
 ## 焦点深度的取值范围。鼠标在最上方 = 对焦最远（灭点），最下方 = 对焦最近。
-## 上限就是 1.0（画面下沿）：前景剪影的深度在它之外（1.35），
-## 所以那层**永远带一点离焦**——贴着镜头的东西本来就不该全清楚，
-## 而且它是一块块黑剪影，全清楚时看着就是几根硬邦邦的黑柱子。
+## 上限就是 1.0（画面下沿）。
 const FOCUS_MIN := 0.0
 const FOCUS_MAX := 1.0
-## 两层各自的离焦模糊上限（像素）。前景离镜头最近，离焦时该糊得最狠。
-const BLUR_ROOM := 7.0
-const BLUR_FORE := 20.0
-## 前景剪影的固定深度：整层都在镜头前面，不参与"按屏内位置估深度"。
-## 1.35 比焦点上限还远一档，保证它始终糊着（见 FOCUS_MAX）。
-const FORE_DEPTH := 1.35
+## 机房层的离焦模糊上限（像素）。图是 3200×1800、铺到 1.14 倍过扫描的屏幕上
+## 约合 0.57 纹素/屏像素；屏上要糊出 1920 图 7px 的观感，纹素半径就得 ×1.75。
+const BLUR_ROOM := 12.0
+## 像素块边长（纹素）。量化后要落在 2 个屏像素一格上，和点阵字同一种颗粒：
+## 2 / 0.57 ≈ 3.5。
+const ROOM_PIXEL := 3.5
 
-## 两个图层各自的一点调色。机房那层压一点、染一点蓝；
-## 前景那层纯当剪影，压得更暗（它是框，不是景）。
+## 机房层的一点调色。渲染本身已经是冷调，这里只微微提亮、染一点蓝。
 const ROOM_GAIN := 1.06
 const ROOM_TINT := Color(0.92, 0.97, 1.0)
-const FORE_GAIN := 0.72
-const FORE_TINT := Color(0.80, 0.88, 1.0)
 ## 暗角与扫描线。菜单是要读字的，这两样都只给一点点：
 ## 暗角 0.30 够把四角压下去，扫描线 0.05 是"这台机器在发光"的笔触。
 const VIGNETTE := 0.30
@@ -66,7 +61,6 @@ const SCRIM_BOTTOM_ALPHA := 0.55
 const SCRIM_BOTTOM_HEIGHT := 0.22
 
 var _room: TextureRect
-var _fore: TextureRect
 var _scrim_l: TextureRect
 var _scrim_b: TextureRect
 
@@ -77,7 +71,6 @@ var _mouse := Vector2(0.5, 0.5)
 var follow_mouse := true
 
 var _base_room := Rect2()
-var _base_fore := Rect2()
 var _last_size := Vector2.ZERO
 var _fade := 1.0
 var _focus := 0.35
@@ -148,18 +141,16 @@ func smoothed_mouse() -> Vector2:
 	return _mouse
 
 
-## 某一层当前的偏移（像素）。i = 0 远景、1 近景。
-func layer_offset(i: int) -> Vector2:
-	return _room.position - _base_room.position if i == 0 else _fore.position - _base_fore.position
+## 机房层当前的偏移（像素）。
+func layer_offset(_i: int) -> Vector2:
+	return _room.position - _base_room.position
 
 
-## 某一层当前的离焦模糊半径（像素）。测试核对"焦点变化真的改变了模糊量"用。
-## 远景那层用画面中线（0.5）当代表深度——它整层铺满屏幕，深度是逐像素算的，
-## 对外只能报一个"中段"的值。
-func layer_blur(i: int) -> float:
-	var mat := (_room.material if i == 0 else _fore.material) as ShaderMaterial
-	var depth := FORE_DEPTH if i == 1 else 0.5
-	return blur_for_depth(depth, _focus, float(mat.get_shader_parameter("blur_max")))
+## 机房层当前的离焦模糊半径（像素）。测试核对"焦点变化真的改变了模糊量"用。
+## 这层铺满屏幕、深度是逐像素算的，对外只能报一个"中段"的值。
+func layer_blur(_i: int) -> float:
+	var mat := _room.material as ShaderMaterial
+	return blur_for_depth(0.5, _focus, float(mat.get_shader_parameter("blur_max")))
 
 
 # ================================================================ 纯函数（可测）
@@ -175,7 +166,7 @@ static func blur_for_depth(depth: float, focus: float, blur_max: float) -> float
 
 
 ## 视差偏移：鼠标往右，画面往左（镜头在往右转）。
-## weight 是这一层的纵深权重——远景小、近景大，这就是纵深的来源。
+## weight 留着当纵深权重——将来真要再拆层，近景给它更大的值就行。
 static func parallax_offset(mouse: Vector2, weight: float, amount: float) -> Vector2:
 	return (Vector2(0.5, 0.5) - mouse) * amount * weight
 
@@ -190,7 +181,6 @@ static func layer_rect(screen: Vector2, overscan: float) -> Rect2:
 
 func _build() -> void:
 	_room = _make_layer(ROOM_TEX)
-	_fore = _make_layer(FORE_TEX)
 	_scrim_l = _make_scrim(true)
 	_scrim_b = _make_scrim(false)
 
@@ -242,7 +232,6 @@ func _apply() -> void:
 	if size != _last_size:
 		_last_size = size
 		_base_room = layer_rect(size, OVERSCAN)
-		_base_fore = layer_rect(size, OVERSCAN * 1.06)   # 近景再放大一点，滑得更开
 		_scrim_l.position = Vector2.ZERO
 		_scrim_l.size = Vector2(size.x * SCRIM_LEFT_WIDTH, size.y)
 		_scrim_b.position = Vector2(0.0, size.y * (1.0 - SCRIM_BOTTOM_HEIGHT))
@@ -250,12 +239,9 @@ func _apply() -> void:
 
 	_focus = focus_from_mouse(_mouse.y)
 
-	var off_room := parallax_offset(_mouse, 0.32, PARALLAX_FAR)
-	var off_fore := parallax_offset(_mouse, 1.0, PARALLAX_NEAR)
+	var off_room := parallax_offset(_mouse, 1.0, PARALLAX_ROOM)
 	_room.position = _base_room.position + off_room
 	_room.size = _base_room.size
-	_fore.position = _base_fore.position + off_fore
-	_fore.size = _base_fore.size
 
 	var room_mat := _room.material as ShaderMaterial
 	room_mat.set_shader_parameter("focus", _focus)
@@ -267,18 +253,5 @@ func _apply() -> void:
 	room_mat.set_shader_parameter("tint", ROOM_TINT)
 	room_mat.set_shader_parameter("vignette", VIGNETTE)
 	room_mat.set_shader_parameter("scanline", SCANLINE)
-	room_mat.set_shader_parameter("pixel", 2.0)
+	room_mat.set_shader_parameter("pixel", ROOM_PIXEL)
 	room_mat.set_shader_parameter("fade", _fade)
-
-	var fore_mat := _fore.material as ShaderMaterial
-	fore_mat.set_shader_parameter("focus", _focus)
-	fore_mat.set_shader_parameter("blur_max", BLUR_FORE)
-	fore_mat.set_shader_parameter("depth_fixed", FORE_DEPTH)
-	fore_mat.set_shader_parameter("horizon", VP.y)
-	fore_mat.set_shader_parameter("screen_size", size)
-	fore_mat.set_shader_parameter("gain", FORE_GAIN)
-	fore_mat.set_shader_parameter("tint", FORE_TINT)
-	fore_mat.set_shader_parameter("vignette", 0.0)
-	fore_mat.set_shader_parameter("scanline", 0.0)
-	fore_mat.set_shader_parameter("pixel", 2.0)
-	fore_mat.set_shader_parameter("fade", _fade)
